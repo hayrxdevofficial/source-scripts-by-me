@@ -1,308 +1,622 @@
---[[ ⚡ GEOMETRY DASH — GUI EDITION (client-side cheat) ⚡ ]]
-local Players    = game:GetService("Players")
-local RunService = game:GetService("RunService")
-local UIS        = game:GetService("UserInputService")
-local lp = Players.LocalPlayer
-local pg = lp:WaitForChild("PlayerGui")
+--[[ ⚡ GEOMETRY DASH v2 — GUI EDITION ⚡
+  • Настоящая физика: блоки-платформы, шипы-треугольники, жёлтые пады
+  • Зажатие = авто-прыжок (как в GD), вращение куба в воздухе
+  • Параллакс-фон, меняющий цвет, земля с сеткой, частицы, взрыв при смерти
+  • Меню с выбором уровня и лучшим результатом (%)
+  Управление: Space / ↑ / W / ЛКМ / тап — прыжок, R — рестарт, Q — в меню, G — достать/убрать Tool
+]]
 
--- === CLEANUP ===
-for _, n in ipairs({"GD_Menu","GD_Game"}) do
-    local o = pg:FindFirstChild(n); if o then o:Destroy() end
+local Players      = game:GetService("Players")
+local RunService   = game:GetService("RunService")
+local UIS          = game:GetService("UserInputService")
+local CAS          = game:GetService("ContextActionService")
+local TweenService = game:GetService("TweenService")
+local lp  = Players.LocalPlayer
+local pg  = lp:WaitForChild("PlayerGui")
+local cam = workspace.CurrentCamera
+
+-- ID музыки (необязательно): вставь rbxassetid://... если хочешь музыку
+local MUSIC_ID = ""
+
+-- ===================== CLEANUP =====================
+local env = (getgenv and getgenv()) or _G
+if env.__GD_CLEANUP then pcall(env.__GD_CLEANUP) end
+local conns = {}
+local function keep(c) conns[#conns+1] = c; return c end
+env.__GD_CLEANUP = function()
+    for _, c in ipairs(conns) do pcall(function() c:Disconnect() end) end
+    pcall(function() CAS:UnbindAction("GD_Jump") end)
+    for _, n in ipairs({"GD_Menu","GD_Game"}) do
+        local o = pg:FindFirstChild(n); if o then o:Destroy() end
+    end
+    for _, c in ipairs({lp:FindFirstChild("Backpack"), lp.Character}) do
+        if c and c:FindFirstChild("GD_Tool") then c.GD_Tool:Destroy() end
+    end
 end
-for _, c in ipairs({lp:FindFirstChild("Backpack"), lp.Character}) do
-    if c and c:FindFirstChild("GD_Tool") then c.GD_Tool:Destroy() end
+env.__GD_CLEANUP()
+
+-- ===================== CONSTANTS =====================
+local W, H       = 960, 540
+local GROUND_H   = 120
+local GROUND_Y   = H - GROUND_H
+local T          = 40            -- размер клетки
+local PX         = 260           -- экранная X куба
+local PS         = 40            -- размер куба
+local GRAV       = 3333
+local JUMP_V     = 800           -- ~2.4 клетки высоты
+local PAD_V      = 1050
+local STEP       = 1/120         -- фиксированный шаг физики
+
+local WHITE, BLACK = Color3.new(1,1,1), Color3.new(0,0,0)
+local C_PRI = Color3.fromRGB(125,255,0)
+local C_SEC = Color3.fromRGB(0,230,255)
+
+-- ===================== HELPERS =====================
+local function new(class, props, parent)
+    local o = Instance.new(class)
+    for k, v in pairs(props or {}) do o[k] = v end
+    if parent then o.Parent = parent end
+    return o
+end
+local function corner(o, r) return new("UICorner", {CornerRadius = UDim.new(0, r)}, o) end
+local function stroke(o, c, t, tr) return new("UIStroke", {Color = c, Thickness = t, Transparency = tr or 0}, o) end
+local function lbl(parent, props)
+    local t = new("TextLabel", {BackgroundTransparency = 1, BorderSizePixel = 0,
+        Font = Enum.Font.GothamBlack, TextColor3 = WHITE}, parent)
+    for k, v in pairs(props) do t[k] = v end
+    return t
+end
+local function btn(parent, props)
+    local b = new("TextButton", {BorderSizePixel = 0, AutoButtonColor = true,
+        Font = Enum.Font.GothamBlack, TextColor3 = WHITE}, parent)
+    for k, v in pairs(props) do b[k] = v end
+    return b
 end
 
--- === LEVELS ===
+local function makeGui(name)
+    local gui = new("ScreenGui", {Name = name, ResetOnSpawn = false, IgnoreGuiInset = true,
+        Enabled = false, DisplayOrder = 50, ZIndexBehavior = Enum.ZIndexBehavior.Sibling}, pg)
+    local back = new("Frame", {Size = UDim2.fromScale(1,1), BackgroundColor3 = BLACK, BorderSizePixel = 0}, gui)
+    local stage = new("Frame", {AnchorPoint = Vector2.new(.5,.5), Position = UDim2.fromScale(.5,.5),
+        Size = UDim2.fromOffset(W, H), BackgroundTransparency = 1, BorderSizePixel = 0,
+        ClipsDescendants = true}, back)
+    local sc = new("UIScale", {}, stage)
+    local function fit()
+        local vp = (workspace.CurrentCamera or cam).ViewportSize
+        sc.Scale = math.max(0.3, math.min(vp.X / W, vp.Y / H))
+    end
+    fit()
+    keep(cam:GetPropertyChangedSignal("ViewportSize"):Connect(fit))
+    return gui, stage
+end
+
+-- куб в стиле GD
+local function makeCube(parent, size)
+    local k = size / 40
+    local c = new("Frame", {Size = UDim2.fromOffset(size, size), AnchorPoint = Vector2.new(.5,.5),
+        BackgroundColor3 = C_PRI, BorderSizePixel = 0}, parent)
+    stroke(c, BLACK, math.max(2, 3*k))
+    local inner = new("Frame", {Size = UDim2.fromOffset(28*k, 28*k), Position = UDim2.fromOffset(6*k, 6*k),
+        BackgroundColor3 = C_SEC, BorderSizePixel = 0}, c)
+    stroke(inner, BLACK, math.max(1.5, 2*k))
+    local function blk(x, y, w, h)
+        new("Frame", {Position = UDim2.fromOffset(x*k, y*k), Size = UDim2.fromOffset(w*k, h*k),
+            BackgroundColor3 = BLACK, BorderSizePixel = 0}, c)
+    end
+    blk(10, 12, 7, 7); blk(23, 12, 7, 7); blk(11, 25, 18, 4)
+    return c
+end
+
+-- ===================== LEVELS =====================
+local function buildLevel(fn)
+    local objs = {}
+    local api = {}
+    function api.spike(c, n)
+        for i = 0, (n or 1) - 1 do
+            objs[#objs+1] = {t = "spike", x = (c+i)*T, y = 0, w = T, h = T}
+        end
+    end
+    function api.block(c, r, w, h)
+        objs[#objs+1] = {t = "block", x = c*T, y = r*T, w = w*T, h = h*T}
+    end
+    function api.pad(c, r)
+        objs[#objs+1] = {t = "pad", x = c*T, y = (r or 0)*T, w = T, h = 10}
+    end
+    fn(api)
+    return objs
+end
+
 local LEVELS = {
-    {Name="Stereo Madness", Speed=420, Length=3200, Color=Color3.fromRGB(80,130,255),
-     Spikes={700,950,1200,1550,1600,2100,2400,2700}},
-    {Name="Back On Track", Speed=480, Length=3800, Color=Color3.fromRGB(120,220,120),
-     Spikes={600,700,800,1300,1350,1400,1900,2200,2250,2900,3000}},
-    {Name="Polargeist", Speed=540, Length=4200, Color=Color3.fromRGB(255,180,60),
-     Spikes={500,650,800,950,1400,1500,1600,2100,2300,2400,2600,3100,3200,3300,3700}},
+    {Name = "Stereo Madness", Diff = "Easy", Stars = 1, Speed = 400, Len = 160,
+     C1 = Color3.fromRGB(30,100,255), C2 = Color3.fromRGB(0,190,255), Accent = Color3.fromRGB(120,240,255),
+     Build = function(a)
+        local spike, block, pad = a.spike, a.block, a.pad
+        spike(16); spike(24,2); block(32,0,3,1); spike(40); spike(47,3); pad(57); spike(60,3)
+        block(70,0,5,1); spike(77,2); spike(85); spike(92)
+        block(100,0,2,1); spike(104); block(108,0,2,1); spike(112,2)
+        spike(120,3); spike(129,2); pad(138); spike(141,3); spike(150)
+     end},
+    {Name = "Back On Track", Diff = "Normal", Stars = 2, Speed = 440, Len = 175,
+     C1 = Color3.fromRGB(190,40,230), C2 = Color3.fromRGB(255,50,140), Accent = Color3.fromRGB(255,140,230),
+     Build = function(a)
+        local spike, block, pad = a.spike, a.block, a.pad
+        spike(16,2); spike(24); spike(30,2); block(38,0,3,1); spike(43,2)
+        block(52,0,6,1); spike(60,3); pad(70); spike(73,3)
+        block(84,0,4,1); spike(89,3); block(93,0,4,1); spike(100); spike(106,2); spike(113,3)
+        pad(122); spike(125,3); spike(134); spike(140,2)
+        block(148,0,3,1); spike(153,2); spike(160,3)
+     end},
+    {Name = "Polargeist", Diff = "Hard", Stars = 3, Speed = 480, Len = 200,
+     C1 = Color3.fromRGB(255,120,20), C2 = Color3.fromRGB(230,30,30), Accent = Color3.fromRGB(255,225,70),
+     Build = function(a)
+        local spike, block, pad = a.spike, a.block, a.pad
+        spike(16,2); spike(24,3); block(34,0,3,1); spike(38,3); spike(48); spike(55,2)
+        pad(64); spike(67,3); spike(79)
+        block(88,0,4,1); spike(93,3); block(101,0,2,1); block(107,0,2,1); spike(111,2)
+        pad(119); spike(122,3); spike(131,2); spike(138); spike(145,3)
+        block(154,0,5,1); spike(160,3); spike(169,2)
+        pad(177); spike(180,3); spike(189)
+     end},
 }
 
--- === CONSTANTS ===
-local GAME_W, GAME_H = 900, 500
-local GROUND_H = 100
-local GROUND_Y = GAME_H - GROUND_H
-local PLAYER_SIZE = 40
-local PLAYER_CENTER_X = 250
-local PLAYER_LEFT = PLAYER_CENTER_X - PLAYER_SIZE/2
-local GRAVITY = 2800
-local JUMP_V  = -1000
+-- ===================== STATE =====================
+local S = {sel = 1, idx = 1, state = "menu", dist = 0, py = 0, vy = 0, grounded = true,
+           rot = 0, attempts = 1, objs = {}, best = {0,0,0}, run = 0, acc = 0,
+           built = nil, trailT = 0}
+local keyHeld, tapHeld = false, false
+local function held() return keyHeld or tapHeld end
 
 -- ===================== MENU =====================
-local menu = Instance.new("ScreenGui")
-menu.Name = "GD_Menu"; menu.ResetOnSpawn = false
-menu.IgnoreGuiInset = true; menu.Enabled = false; menu.Parent = pg
+local menuGui, mst = makeGui("GD_Menu")
+mst.BackgroundTransparency = 0; mst.BackgroundColor3 = WHITE
+new("UIGradient", {Rotation = 90, Color = ColorSequence.new(Color3.fromRGB(25,40,150), Color3.fromRGB(80,15,130))}, mst)
 
-local mframe = Instance.new("Frame")
-mframe.Size = UDim2.new(0,420,0,540)
-mframe.Position = UDim2.new(0.5,-210,0.5,-270)
-mframe.BackgroundColor3 = Color3.fromRGB(15,15,40)
-mframe.BorderSizePixel = 0; mframe.Parent = menu
-Instance.new("UICorner", mframe).CornerRadius = UDim.new(0,16)
-
-local mtitle = Instance.new("TextLabel")
-mtitle.Size = UDim2.new(1,0,0,80); mtitle.BorderSizePixel = 0
-mtitle.BackgroundColor3 = Color3.fromRGB(90,60,220)
-mtitle.Text = "⚡ GEOMETRY DASH"; mtitle.TextColor3 = Color3.new(1,1,1)
-mtitle.Font = Enum.Font.GothamBlack; mtitle.TextSize = 28
-mtitle.Parent = mframe
-Instance.new("UICorner", mtitle).CornerRadius = UDim.new(0,16)
-
-local mlist = Instance.new("ScrollingFrame")
-mlist.Size = UDim2.new(1,-20,1,-110); mlist.Position = UDim2.new(0,10,0,90)
-mlist.BackgroundTransparency = 1; mlist.BorderSizePixel = 0
-mlist.ScrollBarThickness = 6; mlist.AutomaticCanvasSize = Enum.AutomaticSize.Y
-mlist.CanvasSize = UDim2.new(0,0,0,0); mlist.Parent = mframe
-Instance.new("UIListLayout", mlist).Padding = UDim.new(0,10)
-
--- ===================== GAME =====================
-local game = Instance.new("ScreenGui")
-game.Name = "GD_Game"; game.ResetOnSpawn = false
-game.IgnoreGuiInset = true; game.Enabled = false; game.Parent = pg
-
-local gf = Instance.new("Frame")
-gf.Size = UDim2.new(0,GAME_W,0,GAME_H)
-gf.Position = UDim2.new(0.5,-GAME_W/2,0.5,-GAME_H/2)
-gf.BackgroundColor3 = Color3.fromRGB(10,10,30)
-gf.BorderSizePixel = 0; gf.ClipsDescendants = true; gf.Parent = game
-Instance.new("UICorner", gf).CornerRadius = UDim.new(0,12)
-
-local ground = Instance.new("Frame")
-ground.Size = UDim2.new(1,0,0,GROUND_H)
-ground.Position = UDim2.new(0,0,1,-GROUND_H)
-ground.BackgroundColor3 = Color3.fromRGB(40,40,100)
-ground.BorderSizePixel = 0; ground.Parent = gf
-Instance.new("UICorner", ground).CornerRadius = UDim.new(0,8)
-
-local groundLine = Instance.new("Frame")
-groundLine.Size = UDim2.new(1,0,0,3); groundLine.Position = UDim2.new(0,0,0,0)
-groundLine.BackgroundColor3 = Color3.fromRGB(120,120,255)
-groundLine.BorderSizePixel = 0; groundLine.Parent = ground
-
-local obstacles = Instance.new("Folder")
-obstacles.Name = "Obstacles"; obstacles.Parent = gf
-
-local player = Instance.new("Frame")
-player.Name = "Player"; player.AnchorPoint = Vector2.new(0.5, 0.5)
-player.Size = UDim2.new(0,PLAYER_SIZE,0,PLAYER_SIZE)
-player.BackgroundColor3 = Color3.fromRGB(255,220,60)
-player.BorderSizePixel = 0; player.Parent = gf
-Instance.new("UICorner", player).CornerRadius = UDim.new(0,6)
-
-local inner = Instance.new("Frame")
-inner.Size = UDim2.new(0.5,0,0.5,0); inner.Position = UDim2.new(0.25,0,0.25,0)
-inner.BackgroundColor3 = Color3.fromRGB(255,255,200)
-inner.BorderSizePixel = 0; inner.Parent = player
-Instance.new("UICorner", inner).CornerRadius = UDim.new(0,3)
-
-local attemptsLbl = Instance.new("TextLabel")
-attemptsLbl.Size = UDim2.new(0,250,0,40); attemptsLbl.Position = UDim2.new(0,20,0,20)
-attemptsLbl.BackgroundTransparency = 1; attemptsLbl.TextColor3 = Color3.new(1,1,1)
-attemptsLbl.Font = Enum.Font.GothamBlack; attemptsLbl.TextSize = 22
-attemptsLbl.TextXAlignment = Enum.TextXAlignment.Left
-attemptsLbl.Text = "Attempt 1"; attemptsLbl.Parent = gf
-
-local progBg = Instance.new("Frame")
-progBg.Size = UDim2.new(0,300,0,16); progBg.Position = UDim2.new(0.5,-150,0,30)
-progBg.BackgroundColor3 = Color3.fromRGB(50,50,80)
-progBg.BorderSizePixel = 0; progBg.Parent = gf
-Instance.new("UICorner", progBg).CornerRadius = UDim.new(0,8)
-
-local progFill = Instance.new("Frame")
-progFill.Size = UDim2.new(0,0,1,0)
-progFill.BackgroundColor3 = Color3.fromRGB(100,200,255)
-progFill.BorderSizePixel = 0; progFill.Parent = progBg
-Instance.new("UICorner", progFill).CornerRadius = UDim.new(0,8)
-
-local pctLbl = Instance.new("TextLabel")
-pctLbl.Size = UDim2.new(0,100,0,20); pctLbl.Position = UDim2.new(0.5,-50,0,52)
-pctLbl.BackgroundTransparency = 1; pctLbl.TextColor3 = Color3.new(1,1,1)
-pctLbl.Font = Enum.Font.GothamBold; pctLbl.TextSize = 14
-pctLbl.Text = "0%"; pctLbl.Parent = gf
-
-local closeBtn = Instance.new("TextButton")
-closeBtn.Size = UDim2.new(0,40,0,40); closeBtn.Position = UDim2.new(1,-50,0,10)
-closeBtn.BackgroundColor3 = Color3.fromRGB(200,50,50)
-closeBtn.TextColor3 = Color3.new(1,1,1); closeBtn.Font = Enum.Font.GothamBlack
-closeBtn.TextSize = 22; closeBtn.Text = "✕"; closeBtn.BorderSizePixel = 0
-closeBtn.Parent = gf
-Instance.new("UICorner", closeBtn).CornerRadius = UDim.new(0,8)
-
-local winOverlay = Instance.new("TextLabel")
-winOverlay.Size = UDim2.new(1,0,0,100); winOverlay.Position = UDim2.new(0,0,0.5,-50)
-winOverlay.BackgroundTransparency = 1
-winOverlay.TextColor3 = Color3.fromRGB(100,255,100)
-winOverlay.Font = Enum.Font.GothamBlack; winOverlay.TextSize = 56
-winOverlay.Text = "LEVEL COMPLETE!"; winOverlay.Visible = false
-winOverlay.Parent = gf
-
--- === STATE ===
-local S = {running=false, camX=0, py=GROUND_Y-PLAYER_SIZE, vy=0,
-           grounded=true, level=nil, attempts=1, dead=false, conn=nil}
-
-local function rectOverlap(ax,ay,aw,ah,bx,by,bw,bh)
-    return ax < bx+bw and ax+aw > bx and ay < by+bh and ay+ah > by
-end
-local function stopLoop() if S.conn then S.conn:Disconnect(); S.conn = nil end end
-local function jump()
-    if S.running and S.grounded and not S.dead then S.vy = JUMP_V; S.grounded = false end
+local msq = {}
+for i = 1, 10 do
+    local s = math.random(40, 110)
+    local f = new("Frame", {Size = UDim2.fromOffset(s,s), AnchorPoint = Vector2.new(.5,.5),
+        BackgroundColor3 = WHITE, BackgroundTransparency = .9, BorderSizePixel = 0}, mst)
+    msq[i] = {f = f, x = math.random(0, W), y = math.random(0, H), v = math.random(15, 45), r = math.random(-30, 30)}
 end
 
-local startLevel -- forward decl
+local title = lbl(mst, {Size = UDim2.fromOffset(W, 90), Position = UDim2.fromOffset(0, 30),
+    Text = "GEOMETRY DASH", TextSize = 62})
+new("UIStroke", {Color = BLACK, Thickness = 5}, title)
+new("UIGradient", {Rotation = 90, Color = ColorSequence.new(Color3.fromRGB(255,240,90), Color3.fromRGB(255,140,20))}, title)
+local iconL = makeCube(mst, 64); iconL.Position = UDim2.fromOffset(W/2 - 350, 75); iconL.Rotation = -12
+local iconR = makeCube(mst, 64); iconR.Position = UDim2.fromOffset(W/2 + 350, 75); iconR.Rotation = 12
+
+local card = new("Frame", {Size = UDim2.fromOffset(520, 230), Position = UDim2.fromOffset(W/2 - 260, 150),
+    BackgroundColor3 = BLACK, BackgroundTransparency = .35, BorderSizePixel = 0}, mst)
+corner(card, 16)
+local cardStroke = stroke(card, WHITE, 3)
+local nameLbl = lbl(card, {Size = UDim2.new(1,0,0,56), Position = UDim2.fromOffset(0,14), TextSize = 40})
+local diffLbl = lbl(card, {Size = UDim2.new(1,0,0,30), Position = UDim2.fromOffset(0,72), TextSize = 24,
+    TextColor3 = Color3.fromRGB(255,225,90), Font = Enum.Font.GothamBold})
+local infoLbl = lbl(card, {Size = UDim2.new(1,0,0,22), Position = UDim2.fromOffset(0,108), TextSize = 16,
+    TextColor3 = Color3.fromRGB(200,200,230), Font = Enum.Font.GothamMedium})
+local bestLbl = lbl(card, {Size = UDim2.new(1,0,0,22), Position = UDim2.fromOffset(0,148), TextSize = 18,
+    Font = Enum.Font.GothamBold})
+local barBg = new("Frame", {Size = UDim2.fromOffset(440,16), Position = UDim2.fromOffset(40,180),
+    BackgroundColor3 = Color3.fromRGB(20,20,40), BorderSizePixel = 0}, card)
+corner(barBg, 8); stroke(barBg, WHITE, 2, .5)
+local barFill = new("Frame", {Size = UDim2.new(0,0,1,0), BackgroundColor3 = WHITE, BorderSizePixel = 0}, barBg)
+corner(barFill, 8)
+
+local function arrow(txt, x)
+    local b = btn(mst, {Size = UDim2.fromOffset(64,100), Position = UDim2.fromOffset(x, 215),
+        BackgroundColor3 = Color3.fromRGB(255,255,255), BackgroundTransparency = .85, Text = txt, TextSize = 36})
+    corner(b, 14)
+    return b
+end
+local leftB  = arrow("◀", W/2 - 350)
+local rightB = arrow("▶", W/2 + 286)
+
+local playB = btn(mst, {Size = UDim2.fromOffset(240,72), Position = UDim2.fromOffset(W/2 - 120, 400),
+    BackgroundColor3 = Color3.fromRGB(70,220,70), Text = "▶  PLAY", TextSize = 34})
+corner(playB, 16); stroke(playB, BLACK, 4)
+
+local menuClose = btn(mst, {Size = UDim2.fromOffset(44,44), Position = UDim2.fromOffset(W-58, 14),
+    BackgroundColor3 = Color3.fromRGB(200,50,50), Text = "✕", TextSize = 22})
+corner(menuClose, 10)
+
+lbl(mst, {Size = UDim2.fromOffset(W,24), Position = UDim2.fromOffset(0, 495), TextSize = 14,
+    Font = Enum.Font.GothamMedium, TextTransparency = .25,
+    Text = "Space / ↑ / W / click / tap — jump   •   hold to keep jumping   •   R — restart   •   Q — menu"})
+
+local function refreshMenu()
+    local L = LEVELS[S.sel]
+    cardStroke.Color = L.Accent
+    nameLbl.Text = L.Name
+    diffLbl.Text = string.rep("★", L.Stars) .. string.rep("☆", 3 - L.Stars) .. "   " .. L.Diff
+    infoLbl.Text = string.format("Speed ×%.1f   •   Length %d blocks", L.Speed/400, L.Len)
+    local b = S.best[S.sel]
+    bestLbl.Text = "Best: " .. b .. "%"
+    bestLbl.TextColor3 = (b >= 100) and Color3.fromRGB(110,255,110) or WHITE
+    barFill.Size = UDim2.new(b/100, 0, 1, 0)
+    barFill.BackgroundColor3 = L.Accent
+end
+
+-- ===================== GAME GUI =====================
+local gameGui, gst = makeGui("GD_Game")
+gst.BackgroundTransparency = 1
+
+local bg = new("Frame", {Size = UDim2.fromScale(1,1), BackgroundColor3 = Color3.fromRGB(30,100,255),
+    BorderSizePixel = 0, ZIndex = 1}, gst)
+new("UIGradient", {Rotation = 90, Color = ColorSequence.new(Color3.new(.55,.55,.55), WHITE)}, bg)
+
+local bgSq = {}
+for i = 1, 9 do
+    local s = math.random(110, 260)
+    local f = new("Frame", {Size = UDim2.fromOffset(s,s), BackgroundColor3 = WHITE,
+        BackgroundTransparency = (i % 2 == 0) and .93 or .9, BorderSizePixel = 0}, bg)
+    bgSq[i] = {f = f, size = s, x = math.random(0, W), y = math.random(-40, GROUND_Y - s + 60),
+               k = (i % 2 == 0) and 0.12 or 0.22}
+end
+
+local ground = new("Frame", {Size = UDim2.fromOffset(W, GROUND_H), Position = UDim2.fromOffset(0, GROUND_Y),
+    BackgroundColor3 = Color3.fromRGB(20,40,120), BorderSizePixel = 0, ZIndex = 2, ClipsDescendants = true}, gst)
+new("UIGradient", {Rotation = 90, Color = ColorSequence.new(WHITE, Color3.new(.6,.6,.6))}, ground)
+local gLines = {}
+for i = 1, math.ceil(W/T) + 2 do
+    gLines[i] = new("Frame", {Size = UDim2.new(0,2,1,0), BackgroundColor3 = WHITE,
+        BackgroundTransparency = .85, BorderSizePixel = 0}, ground)
+end
+new("Frame", {Size = UDim2.new(1,0,0,2), Position = UDim2.fromOffset(0, 50), BackgroundColor3 = WHITE,
+    BackgroundTransparency = .88, BorderSizePixel = 0}, ground)
+local groundGlow = new("Frame", {Size = UDim2.fromOffset(W, 18), Position = UDim2.fromOffset(0, GROUND_Y - 18),
+    BackgroundColor3 = WHITE, BorderSizePixel = 0, ZIndex = 2}, gst)
+new("UIGradient", {Rotation = 90, Transparency = NumberSequence.new(1, .55)}, groundGlow)
+local groundTop = new("Frame", {Size = UDim2.fromOffset(W, 4), Position = UDim2.fromOffset(0, GROUND_Y),
+    BackgroundColor3 = WHITE, BorderSizePixel = 0, ZIndex = 4}, gst)
+
+local world = new("Frame", {Size = UDim2.fromScale(1,1), BackgroundTransparency = 1, BorderSizePixel = 0, ZIndex = 3}, gst)
+
+local attemptLbl = lbl(gst, {Size = UDim2.fromOffset(520, 70), Position = UDim2.fromOffset(300, 130),
+    TextXAlignment = Enum.TextXAlignment.Left, TextSize = 52, TextTransparency = .1, ZIndex = 3, Text = "Attempt 1"})
+new("UIStroke", {Color = BLACK, Thickness = 3}, attemptLbl)
+
+local player = makeCube(gst, PS); player.ZIndex = 5
+local fx = new("Frame", {Size = UDim2.fromScale(1,1), BackgroundTransparency = 1, BorderSizePixel = 0, ZIndex = 6}, gst)
+
+-- HUD
+local barBg2 = new("Frame", {Size = UDim2.fromOffset(400,14), Position = UDim2.fromOffset(W/2-200, 22),
+    BackgroundColor3 = BLACK, BackgroundTransparency = .45, BorderSizePixel = 0, ZIndex = 10}, gst)
+corner(barBg2, 7); stroke(barBg2, WHITE, 2, .3)
+local progFill = new("Frame", {Size = UDim2.new(0,0,1,0), BackgroundColor3 = WHITE, BorderSizePixel = 0}, barBg2)
+corner(progFill, 7)
+local pctLbl = lbl(gst, {Size = UDim2.fromOffset(80,30), Position = UDim2.fromOffset(W/2+210, 14), TextSize = 20,
+    TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 10, Text = "0%"})
+new("UIStroke", {Color = BLACK, Thickness = 2}, pctLbl)
+
+local tapBtn = btn(gst, {Size = UDim2.fromScale(1,1), BackgroundTransparency = 1, Text = "", AutoButtonColor = false, ZIndex = 9})
+local closeBtn = btn(gst, {Size = UDim2.fromOffset(44,44), Position = UDim2.fromOffset(W-58, 10),
+    BackgroundColor3 = Color3.fromRGB(200,50,50), Text = "✕", TextSize = 22, ZIndex = 12})
+corner(closeBtn, 10)
+
+local winGroup = new("Frame", {Size = UDim2.fromScale(1,1), BackgroundTransparency = 1, Visible = false, ZIndex = 15}, gst)
+local winTitle = lbl(winGroup, {Size = UDim2.fromOffset(W,90), Position = UDim2.fromOffset(0,190),
+    Text = "LEVEL COMPLETE!", TextSize = 64, TextColor3 = Color3.fromRGB(120,255,120)})
+new("UIStroke", {Color = BLACK, Thickness = 5}, winTitle)
+local winSub = lbl(winGroup, {Size = UDim2.fromOffset(W,40), Position = UDim2.fromOffset(0,285), TextSize = 28})
+new("UIStroke", {Color = BLACK, Thickness = 3}, winSub)
+
+local flashF = new("Frame", {Size = UDim2.fromScale(1,1), BackgroundColor3 = WHITE, BackgroundTransparency = 1,
+    BorderSizePixel = 0, ZIndex = 20}, gst)
+local function flash(a)
+    flashF.BackgroundTransparency = a
+    TweenService:Create(flashF, TweenInfo.new(.45), {BackgroundTransparency = 1}):Play()
+end
+
+local sound
+if MUSIC_ID ~= "" then
+    sound = new("Sound", {SoundId = MUSIC_ID, Looped = true, Volume = .6}, gameGui)
+end
+
+-- ===================== PARTICLES =====================
+local pool, parts = {}, {}
+local function spawn(wx, wy, vx, vy, life, size, color, g)
+    if #parts > 140 then return end
+    local f = table.remove(pool) or new("Frame", {BorderSizePixel = 0}, fx)
+    f.BackgroundColor3 = color; f.Visible = true
+    parts[#parts+1] = {f = f, wx = wx, wy = wy, vx = vx, vy = vy, life = life, max = life, size = size, g = g or 0}
+end
+local function updateParticles(dt, camX)
+    for i = #parts, 1, -1 do
+        local p = parts[i]
+        p.life -= dt
+        if p.life <= 0 then
+            p.f.Visible = false; pool[#pool+1] = p.f; table.remove(parts, i)
+        else
+            p.vy -= p.g * dt
+            p.wx += p.vx * dt; p.wy += p.vy * dt
+            local a = p.life / p.max
+            local s = p.size * (0.4 + 0.6*a)
+            p.f.Size = UDim2.fromOffset(s, s)
+            p.f.Position = UDim2.fromOffset(p.wx - camX - s/2, GROUND_Y - p.wy - s/2)
+            p.f.BackgroundTransparency = 1 - a
+        end
+    end
+end
+
+-- ===================== WORLD BUILD =====================
+local function createObjUI(o, accent)
+    local f
+    if o.t == "spike" then
+        local N = 10
+        f = new("Frame", {Size = UDim2.fromOffset(T, T), BackgroundTransparency = 1, BorderSizePixel = 0}, world)
+        local sh = T / N
+        for i = 1, N do
+            local w = T * i / N
+            new("Frame", {BackgroundColor3 = WHITE, BorderSizePixel = 0,
+                Size = UDim2.fromOffset(w + 4, sh + 1), Position = UDim2.fromOffset((T - w - 4)/2, (i-1)*sh - 1)}, f)
+        end
+        for i = 1, N do
+            local w = T * i / N
+            new("Frame", {BackgroundColor3 = Color3.fromRGB(6,6,12), BorderSizePixel = 0,
+                Size = UDim2.fromOffset(w, sh), Position = UDim2.fromOffset((T - w)/2, (i-1)*sh)}, f)
+        end
+    elseif o.t == "block" then
+        f = new("Frame", {Size = UDim2.fromOffset(o.w, o.h), BackgroundColor3 = Color3.fromRGB(8,8,16), BorderSizePixel = 0}, world)
+        stroke(f, WHITE, 2)
+        local inn = new("Frame", {Position = UDim2.fromOffset(5,5), Size = UDim2.new(1,-10,1,-10),
+            BackgroundTransparency = 1, BorderSizePixel = 0}, f)
+        stroke(inn, accent, 1.5, .4)
+    elseif o.t == "pad" then
+        f = new("Frame", {Size = UDim2.fromOffset(T, o.h), BackgroundColor3 = Color3.fromRGB(255,235,40), BorderSizePixel = 0}, world)
+        corner(f, 5)
+        stroke(f, Color3.fromRGB(255,255,170), 2, .3)
+    elseif o.t == "end" then
+        f = new("Frame", {Size = UDim2.fromOffset(o.w, o.h), BackgroundColor3 = WHITE, BorderSizePixel = 0}, world)
+        local g = new("Frame", {Size = UDim2.fromOffset(60, o.h), Position = UDim2.fromOffset(-60, 0),
+            BackgroundColor3 = accent, BorderSizePixel = 0}, f)
+        new("UIGradient", {Transparency = NumberSequence.new(1, .3)}, g)
+    end
+    f.Visible = false
+    o.ui = f; o.vis = false
+end
+
+local function buildWorld(idx)
+    world:ClearAllChildren()
+    local L = LEVELS[idx]
+    S.objs = buildLevel(L.Build)
+    S.objs[#S.objs+1] = {t = "end", x = L.Len*T, y = 0, w = 10, h = GROUND_Y}
+    for _, o in ipairs(S.objs) do createObjUI(o, L.Accent) end
+    groundTop.BackgroundColor3 = L.Accent
+    groundGlow.BackgroundColor3 = L.Accent
+    progFill.BackgroundColor3 = L.Accent
+    S.built = idx
+end
+
+-- ===================== INPUT BINDING =====================
+local bound = false
+local function bindJump()
+    if bound then return end
+    bound = true
+    CAS:BindActionAtPriority("GD_Jump", function(_, st)
+        if st == Enum.UserInputState.Begin then keyHeld = true
+        elseif st == Enum.UserInputState.End or st == Enum.UserInputState.Cancel then keyHeld = false end
+        return Enum.ContextActionResult.Sink
+    end, false, Enum.ContextActionPriority.High.Value, Enum.KeyCode.Space, Enum.KeyCode.Up, Enum.KeyCode.W)
+end
+local function unbindJump()
+    if bound then bound = false; CAS:UnbindAction("GD_Jump") end
+    keyHeld = false; tapHeld = false
+end
+
+keep(tapBtn.InputBegan:Connect(function(i)
+    if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then tapHeld = true end
+end))
+keep(tapBtn.InputEnded:Connect(function(i)
+    if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then tapHeld = false end
+end))
+
+-- ===================== GAME FLOW =====================
+local startLevel
+
+local function leaveToMenu()
+    S.state = "menu"; S.run += 1
+    unbindJump()
+    if sound then sound:Stop() end
+    gameGui.Enabled = false; menuGui.Enabled = true
+    refreshMenu()
+end
+
+local function closeAll()
+    S.state = "menu"; S.run += 1
+    unbindJump()
+    if sound then sound:Stop() end
+    gameGui.Enabled = false; menuGui.Enabled = false
+end
+
+startLevel = function(idx, retry)
+    if S.built ~= idx then buildWorld(idx) end
+    if not retry then S.attempts = 1 end
+    S.idx = idx; S.run += 1; S.state = "play"
+    S.dist = 0; S.py = 0; S.vy = 0; S.grounded = true; S.rot = 0; S.acc = 0; S.trailT = 0
+    for _, o in ipairs(S.objs) do o.used = false end
+    attemptLbl.Text = "Attempt " .. S.attempts
+    player.Visible = true; player.Rotation = 0
+    winGroup.Visible = false
+    menuGui.Enabled = false; gameGui.Enabled = true
+    bindJump()
+    if sound then sound.TimePosition = 0; sound:Play() end
+end
 
 local function die()
-    if S.dead then return end
-    S.dead = true
-    player.BackgroundColor3 = Color3.fromRGB(255,50,50)
-    task.delay(0.35, function()
-        if S.level and S.running then
-            S.attempts += 1
-            startLevel(S.level, true)
-        end
-    end)
-end
-
-local function winLevel()
-    if S.dead then return end
-    S.dead = true; S.running = false; stopLoop()
-    winOverlay.Visible = true
-    task.delay(1.5, function()
-        winOverlay.Visible = false
-        game.Enabled = false
-        menu.Enabled = true
-    end)
-end
-
-startLevel = function(lvl, isRestart)
-    S.level = lvl; S.running = true; S.camX = 0
-    S.py = GROUND_Y - PLAYER_SIZE; S.vy = 0
-    S.grounded = true; S.dead = false
-    if not isRestart then S.attempts = 1 end
-    attemptsLbl.Text = "Attempt " .. S.attempts
-
-    player.BackgroundColor3 = Color3.fromRGB(255,220,60)
-    player.Rotation = 0
-    progFill.Size = UDim2.new(0,0,1,0); pctLbl.Text = "0%"
-    winOverlay.Visible = false
-    gf.BackgroundColor3 = Color3.fromRGB(10,10,30)
-    ground.BackgroundColor3 = Color3.fromRGB(40,40,100)
-    groundLine.BackgroundColor3 = lvl.Color
-
-    for _, c in ipairs(obstacles:GetChildren()) do c:Destroy() end
-    for _, wx in ipairs(lvl.Spikes) do
-        local spike = Instance.new("Frame")
-        spike.Size = UDim2.new(0,30,0,30)
-        spike.BackgroundColor3 = Color3.fromRGB(255,60,60)
-        spike.BorderSizePixel = 0
-        spike.Parent = obstacles
-        spike:SetAttribute("WorldX", wx)
-        local tri = Instance.new("Frame")
-        tri.Size = UDim2.new(0,10,0,10)
-        tri.Position = UDim2.new(0.5,-5,0,2)
-        tri.BackgroundColor3 = Color3.fromRGB(255,150,150)
-        tri.BorderSizePixel = 0; tri.Rotation = 45; tri.Parent = spike
+    if S.state ~= "play" then return end
+    S.state = "dead"
+    local L = LEVELS[S.idx]
+    local pct = math.floor(math.clamp(S.dist / (L.Len*T), 0, 1) * 100)
+    S.best[S.idx] = math.max(S.best[S.idx], pct)
+    player.Visible = false
+    for i = 1, 24 do
+        local a = math.rad(math.random(0, 359)); local sp = math.random(120, 430)
+        spawn(S.dist, S.py + PS/2, math.cos(a)*sp, math.sin(a)*sp, math.random(50,100)/100,
+              math.random(7,14), (i % 2 == 0) and C_PRI or C_SEC, 900)
     end
-
-    menu.Enabled = false; game.Enabled = true
-    stopLoop()
-    S.conn = RunService.RenderStepped:Connect(function(dt) end)
-    S.conn:Disconnect()
-    S.conn = RunService.RenderStepped:Connect(function(dt)
-        if not S.running then return end
-        dt = math.min(dt, 0.05)
-        local lvl2 = S.level
-
-        S.vy += GRAVITY * dt
-        S.py += S.vy * dt
-        if S.py >= GROUND_Y - PLAYER_SIZE then
-            S.py = GROUND_Y - PLAYER_SIZE; S.vy = 0; S.grounded = true
+    flash(.55)
+    if sound then sound:Stop() end
+    local token = S.run
+    task.delay(0.95, function()
+        if S.state == "dead" and S.run == token then
+            S.attempts += 1
+            startLevel(S.idx, true)
         end
+    end)
+end
 
-        S.camX += lvl2.Speed * dt
+local function win()
+    S.state = "won"
+    S.best[S.idx] = 100
+    winSub.Text = "Attempts: " .. S.attempts
+    winGroup.Visible = true
+    local L = LEVELS[S.idx]
+    for i = 1, 40 do
+        spawn(S.dist, S.py + PS/2, math.random(-250, 350), math.random(250, 650), math.random(80,160)/100,
+              math.random(6,12), (i % 3 == 0) and C_PRI or ((i % 3 == 1) and C_SEC or L.Accent), 900)
+    end
+    flash(.6)
+    local token = S.run
+    task.delay(2.8, function()
+        if S.state == "won" and S.run == token then leaveToMenu() end
+    end)
+end
 
-        player.Position = UDim2.new(0, PLAYER_CENTER_X, 0, S.py + PLAYER_SIZE/2)
-        player.Rotation = math.clamp(S.vy / 30, -25, 25)
+-- ===================== PHYSICS =====================
+local function step(dt)
+    local L = LEVELS[S.idx]
+    if held() and S.grounded then S.vy = JUMP_V; S.grounded = false end
+    local prevBottom = S.py
+    S.vy -= GRAV * dt
+    S.py += S.vy * dt
+    S.dist += L.Speed * dt
+    S.grounded = false
+    if S.py <= 0 then S.py = 0; S.vy = 0; S.grounded = true end
 
-        for _, obs in ipairs(obstacles:GetChildren()) do
-            local wx = obs:GetAttribute("WorldX")
-            local sx = wx - S.camX
-            obs.Position = UDim2.new(0, sx, 0, GROUND_Y - 30)
-            obs.Visible = sx > -60 and sx < GAME_W + 60
-            if not S.dead then
-                local hx, hy, hw, hh = sx+8, GROUND_Y-30+8, 14, 22
-                if rectOverlap(PLAYER_LEFT+6, S.py+6, PLAYER_SIZE-12, PLAYER_SIZE-12,
-                               hx, hy, hw, hh) then
-                    die()
+    local left, right = S.dist - PS/2 + 3, S.dist + PS/2 - 3
+    for _, o in ipairs(S.objs) do
+        if o.x > right + 2 or o.x + o.w < left - 2 then continue end
+        local bottom, top = S.py, S.py + PS - 4
+        if o.t == "block" then
+            if left < o.x + o.w and right > o.x and bottom < o.y + o.h and top > o.y then
+                if prevBottom >= o.y + o.h - 4 and S.vy <= 0 then
+                    S.py = o.y + o.h; S.vy = 0; S.grounded = true
+                else
+                    die(); return
                 end
             end
+        elseif o.t == "spike" then
+            if left < o.x + T - 12 and right > o.x + 12 and bottom < o.y + 20 and top > o.y then
+                die(); return
+            end
+        elseif o.t == "pad" then
+            if not o.used and left < o.x + o.w and right > o.x and bottom < o.y + o.h and top > o.y then
+                o.used = true; S.vy = PAD_V; S.grounded = false
+            end
         end
-
-        local pct = math.clamp(S.camX / lvl2.Length, 0, 1)
-        progFill.Size = UDim2.new(pct, 0, 1, 0)
-        pctLbl.Text = math.floor(pct * 100) .. "%"
-
-        if S.camX >= lvl2.Length then winLevel() end
-    end)
+    end
+    if S.dist >= L.Len * T then win() end
 end
 
--- level buttons
-for _, lvl in ipairs(LEVELS) do
-    local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(1,-10,0,70)
-    btn.BackgroundColor3 = lvl.Color
-    btn.BorderSizePixel = 0; btn.TextColor3 = Color3.new(1,1,1)
-    btn.Font = Enum.Font.GothamBlack; btn.TextSize = 22
-    btn.Text = "▶  " .. lvl.Name; btn.Parent = mlist
-    Instance.new("UICorner", btn).CornerRadius = UDim.new(0,10)
-    btn.MouseButton1Click:Connect(function() startLevel(lvl, false) end)
+-- ===================== RENDER =====================
+local function draw(dt)
+    local L = LEVELS[S.idx]
+    local camX = S.dist - PX
+    local pct = math.clamp(S.dist / (L.Len*T), 0, 1)
+
+    local bgc = L.C1:Lerp(L.C2, pct)
+    bg.BackgroundColor3 = bgc
+    ground.BackgroundColor3 = bgc:Lerp(BLACK, .55)
+
+    for _, s in ipairs(bgSq) do
+        local x = (s.x - camX * s.k) % (W + s.size*2) - s.size
+        s.f.Position = UDim2.fromOffset(x, s.y)
+    end
+    local off = camX % T
+    for i, ln in ipairs(gLines) do ln.Position = UDim2.fromOffset((i-1)*T - off, 0) end
+
+    for _, o in ipairs(S.objs) do
+        local sx = o.x - camX
+        local vis = sx > -T*2 and sx < W + 60
+        if vis then
+            o.ui.Position = UDim2.fromOffset(math.floor(sx), math.floor(GROUND_Y - o.y - o.h))
+        end
+        if vis ~= o.vis then o.vis = vis; o.ui.Visible = vis end
+    end
+
+    -- игрок
+    if S.state == "play" or S.state == "won" then
+        if S.grounded then
+            local target = math.floor(S.rot / 90 + 0.5) * 90
+            S.rot += (target - S.rot) * math.min(1, dt * 25)
+        else
+            S.rot += 410 * dt
+        end
+        player.Position = UDim2.fromOffset(PX, GROUND_Y - S.py - PS/2)
+        player.Rotation = S.rot
+        if S.state == "play" and S.grounded then
+            S.trailT -= dt
+            if S.trailT <= 0 then
+                S.trailT = 0.04
+                spawn(S.dist - PS/2, S.py + 4, math.random(-40, 0), math.random(20, 90), .35, 7, L.Accent, 0)
+            end
+        end
+    end
+
+    -- HUD
+    progFill.Size = UDim2.new(pct, 0, 1, 0)
+    pctLbl.Text = math.floor(pct * 100) .. "%"
+    attemptLbl.Position = UDim2.fromOffset(PX + 60 - S.dist, 130)
+    attemptLbl.Visible = (PX + 60 - S.dist) > -540
+
+    updateParticles(dt, camX)
 end
 
-closeBtn.MouseButton1Click:Connect(function()
-    S.running = false; stopLoop()
-    game.Enabled = false; menu.Enabled = true
-end)
-
--- input
-UIS.InputBegan:Connect(function(input, processed)
-    if processed then return end
-    if input.KeyCode == Enum.KeyCode.Space
-       or input.KeyCode == Enum.KeyCode.Up
-       or input.KeyCode == Enum.KeyCode.W then jump() end
-    if input.KeyCode == Enum.KeyCode.R and S.running and not S.dead then
-        S.attempts += 1
-        startLevel(S.level, true)
+keep(RunService.RenderStepped:Connect(function(dt)
+    if menuGui.Enabled then
+        local t = os.clock()
+        for _, s in ipairs(msq) do
+            s.f.Position = UDim2.fromOffset(s.x, (s.y - t * s.v) % (H + 200) - 100)
+            s.f.Rotation = t * s.r
+        end
+        iconL.Rotation = -12 + math.sin(t*2) * 6
+        iconR.Rotation = 12 - math.sin(t*2) * 6
     end
-    if input.KeyCode == Enum.KeyCode.Escape and game.Enabled then
-        S.running = false; stopLoop()
-        game.Enabled = false; menu.Enabled = true
+    if not gameGui.Enabled then return end
+    dt = math.min(dt, 0.1)
+    if S.state == "play" then
+        S.acc += dt
+        local n = 0
+        while S.acc >= STEP and S.state == "play" and n < 20 do
+            step(STEP); S.acc -= STEP; n += 1
+        end
     end
-end)
+    draw(dt)
+end))
 
-gf.InputBegan:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1
-       or input.UserInputType == Enum.UserInputType.Touch then
-        jump()
-    end
-end)
+-- ===================== MENU LOGIC =====================
+local function selectLevel(d)
+    S.sel = (S.sel - 1 + d) % #LEVELS + 1
+    refreshMenu()
+end
+leftB.MouseButton1Click:Connect(function() selectLevel(-1) end)
+rightB.MouseButton1Click:Connect(function() selectLevel(1) end)
+playB.MouseButton1Click:Connect(function() startLevel(S.sel, false) end)
+menuClose.MouseButton1Click:Connect(function() menuGui.Enabled = false end)
+closeBtn.MouseButton1Click:Connect(leaveToMenu)
+refreshMenu()
 
--- === TOOL (в Backpack, полностью локальный) ===
+-- ===================== TOOL =====================
 local tool = Instance.new("Tool")
 tool.Name = "GD_Tool"; tool.RequiresHandle = false
 tool.CanBeDropped = false; tool.ToolTip = "Geometry Dash"
 
 local function bindTool(t)
     t.Equipped:Connect(function()
-        if not game.Enabled then menu.Enabled = true end
+        if not gameGui.Enabled then menuGui.Enabled = true; refreshMenu() end
     end)
-    t.Unequipped:Connect(function()
-        menu.Enabled = false; game.Enabled = false
-        S.running = false; stopLoop()
-    end)
+    t.Unequipped:Connect(closeAll)
 end
 
 local function giveTool()
@@ -311,18 +625,16 @@ local function giveTool()
         local t = tool:Clone(); bindTool(t); t.Parent = bp
     end
 end
-
 giveTool()
-lp.CharacterAdded:Connect(function()
-    menu.Enabled = false; game.Enabled = false
-    S.running = false; stopLoop()
+keep(lp.CharacterAdded:Connect(function()
+    closeAll()
     task.wait(1); giveTool()
-end)
+end))
 
--- G — вкл/выкл Tool вручную (если хотбар не срабатывает)
-UIS.InputBegan:Connect(function(input, processed)
+keep(UIS.InputBegan:Connect(function(input, processed)
     if processed then return end
-    if input.KeyCode == Enum.KeyCode.G then
+    local k = input.KeyCode
+    if k == Enum.KeyCode.G then
         local ch = lp.Character
         local hum = ch and ch:FindFirstChildOfClass("Humanoid")
         if hum then
@@ -331,7 +643,17 @@ UIS.InputBegan:Connect(function(input, processed)
                 if t.Parent == ch then hum:UnequipTools() else hum:EquipTool(t) end
             end
         end
+    elseif gameGui.Enabled then
+        if k == Enum.KeyCode.R and (S.state == "play" or S.state == "dead") then
+            S.attempts += 1; startLevel(S.idx, true)
+        elseif k == Enum.KeyCode.Q then
+            leaveToMenu()
+        end
+    elseif menuGui.Enabled then
+        if k == Enum.KeyCode.Left or k == Enum.KeyCode.A then selectLevel(-1)
+        elseif k == Enum.KeyCode.Right or k == Enum.KeyCode.D then selectLevel(1)
+        elseif k == Enum.KeyCode.Return then startLevel(S.sel, false) end
     end
-end)
+end))
 
-print("[GD] GUI Geometry Dash loaded. Take GD_Tool (or press G) to play.")
+print("[GD] Geometry Dash v2 loaded. Take GD_Tool (or press G) to play.")
