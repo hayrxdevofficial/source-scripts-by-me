@@ -3,6 +3,7 @@
   • Зажатие = авто-прыжок (как в GD), вращение куба в воздухе
   • Параллакс-фон, меняющий цвет, земля с сеткой, частицы, взрыв при смерти
   • Меню с выбором уровня и лучшим результатом (%)
+  • Новый уровень GRIEF (EXTREME DEMON) с переключаемым авто-ботом
   Управление: Space / ↑ / W / ЛКМ / тап — прыжок, R — рестарт, Q — в меню, G — достать/убрать Tool
 ]]
 
@@ -157,14 +158,26 @@ local LEVELS = {
         block(154,0,5,1); spike(160,3); spike(169,2)
         pad(177); spike(180,3); spike(189)
      end},
+    {Name = "GRIEF", Diff = "EXTREME DEMON", Stars = 3, Speed = 600, Len = 320,
+     C1 = Color3.fromRGB(15,5,25), C2 = Color3.fromRGB(105,5,25), Accent = Color3.fromRGB(255,35,65),
+     Build = function(a)
+        local spike, block = a.spike, a.block
+        -- Оригинальная сложная трасса: группы препятствий с промежутками для честных прыжков.
+        spike(18,3);  spike(31,2);  block(44,0,2,1); spike(57,4)
+        spike(70,3);  block(83,0,3,1); spike(96,3);  spike(109,4)
+        block(122,0,2,1); spike(135,3); spike(148,4); spike(161,2)
+        block(174,0,3,1); spike(187,4); spike(200,3); spike(213,4)
+        block(226,0,2,1); spike(239,3); spike(252,4); spike(265,3)
+        spike(278,4); spike(291,3)
+     end},
 }
 
 -- ===================== STATE =====================
 local S = {sel = 1, idx = 1, state = "menu", dist = 0, py = 0, vy = 0, grounded = true,
-           rot = 0, attempts = 1, objs = {}, best = {0,0,0}, run = 0, acc = 0,
-           built = nil, trailT = 0}
-local keyHeld, tapHeld = false, false
-local function held() return keyHeld or tapHeld end
+           rot = 0, attempts = 1, objs = {}, best = {0,0,0,0}, run = 0, acc = 0,
+           built = nil, trailT = 0, autoBot = false}
+local keyHeld, tapHeld, botHeld = false, false, false
+local function held() return keyHeld or tapHeld or botHeld end
 
 -- ===================== MENU =====================
 local menuGui, mst = makeGui("GD_Menu")
@@ -212,9 +225,13 @@ end
 local leftB  = arrow("◀", W/2 - 350)
 local rightB = arrow("▶", W/2 + 286)
 
-local playB = btn(mst, {Size = UDim2.fromOffset(240,72), Position = UDim2.fromOffset(W/2 - 120, 400),
-    BackgroundColor3 = Color3.fromRGB(70,220,70), Text = "▶  PLAY", TextSize = 34})
+local playB = btn(mst, {Size = UDim2.fromOffset(230,72), Position = UDim2.fromOffset(W/2 - 260, 400),
+    BackgroundColor3 = Color3.fromRGB(70,220,70), Text = "▶  PLAY", TextSize = 32})
 corner(playB, 16); stroke(playB, BLACK, 4)
+
+local botB = btn(mst, {Size = UDim2.fromOffset(250,72), Position = UDim2.fromOffset(W/2 + 30, 400),
+    BackgroundColor3 = Color3.fromRGB(65,55,85), Text = "AUTO BOT: OFF", TextSize = 21})
+corner(botB, 16); stroke(botB, BLACK, 4)
 
 local menuClose = btn(mst, {Size = UDim2.fromOffset(44,44), Position = UDim2.fromOffset(W-58, 14),
     BackgroundColor3 = Color3.fromRGB(200,50,50), Text = "✕", TextSize = 22})
@@ -222,7 +239,7 @@ corner(menuClose, 10)
 
 lbl(mst, {Size = UDim2.fromOffset(W,24), Position = UDim2.fromOffset(0, 495), TextSize = 14,
     Font = Enum.Font.GothamMedium, TextTransparency = .25,
-    Text = "Space / ↑ / W / click / tap — jump   •   hold to keep jumping   •   R — restart   •   Q — menu"})
+    Text = "Manual: Space / ↑ / W / click / tap — jump   •   AUTO BOT — GRIEF menu toggle   •   R — restart   •   Q — menu"})
 
 local function refreshMenu()
     local L = LEVELS[S.sel]
@@ -235,6 +252,17 @@ local function refreshMenu()
     bestLbl.TextColor3 = (b >= 100) and Color3.fromRGB(110,255,110) or WHITE
     barFill.Size = UDim2.new(b/100, 0, 1, 0)
     barFill.BackgroundColor3 = L.Accent
+
+    local botAvailable = (S.sel == 4)
+    botB.Active = botAvailable
+    botB.AutoButtonColor = botAvailable
+    if not botAvailable then
+        botB.Text = "BOT: GRIEF ONLY"
+        botB.BackgroundColor3 = Color3.fromRGB(65,65,75)
+    else
+        botB.Text = S.autoBot and "AUTO BOT: ON" or "AUTO BOT: OFF"
+        botB.BackgroundColor3 = S.autoBot and Color3.fromRGB(125,55,165) or Color3.fromRGB(65,55,85)
+    end
 end
 
 -- ===================== GAME GUI =====================
@@ -401,7 +429,7 @@ local function bindJump()
 end
 local function unbindJump()
     if bound then bound = false; CAS:UnbindAction("GD_Jump") end
-    keyHeld = false; tapHeld = false
+    keyHeld = false; tapHeld = false; botHeld = false
 end
 
 keep(tapBtn.InputBegan:Connect(function(i)
@@ -434,8 +462,9 @@ startLevel = function(idx, retry)
     if not retry then S.attempts = 1 end
     S.idx = idx; S.run += 1; S.state = "play"
     S.dist = 0; S.py = 0; S.vy = 0; S.grounded = true; S.rot = 0; S.acc = 0; S.trailT = 0
+    botHeld = false
     for _, o in ipairs(S.objs) do o.used = false end
-    attemptLbl.Text = "Attempt " .. S.attempts
+    attemptLbl.Text = "Attempt " .. S.attempts .. (S.autoBot and idx == 4 and "  •  AUTO BOT" or "  •  MANUAL")
     player.Visible = true; player.Rotation = 0
     winGroup.Visible = false
     menuGui.Enabled = false; gameGui.Enabled = true
@@ -486,6 +515,23 @@ end
 -- ===================== PHYSICS =====================
 local function step(dt)
     local L = LEVELS[S.idx]
+
+    -- Авто-бот работает только на GRIEF. Он заранее ищет ближайший шип/блок
+    -- и запускает прыжок так, чтобы куб успевал пролететь над препятствием.
+    botHeld = false
+    if S.autoBot and S.idx == 4 and S.grounded then
+        local lead = math.max(55, L.Speed * 0.12)
+        for _, o in ipairs(S.objs) do
+            if o.t == "spike" or o.t == "block" then
+                local dx = o.x - S.dist
+                if dx <= lead and dx >= -PS then
+                    botHeld = true
+                    break
+                end
+            end
+        end
+    end
+
     if held() and S.grounded then S.vy = JUMP_V; S.grounded = false end
     local prevBottom = S.py
     S.vy -= GRAV * dt
@@ -603,6 +649,12 @@ end
 leftB.MouseButton1Click:Connect(function() selectLevel(-1) end)
 rightB.MouseButton1Click:Connect(function() selectLevel(1) end)
 playB.MouseButton1Click:Connect(function() startLevel(S.sel, false) end)
+botB.MouseButton1Click:Connect(function()
+    if S.sel == 4 then
+        S.autoBot = not S.autoBot
+        refreshMenu()
+    end
+end)
 menuClose.MouseButton1Click:Connect(function() menuGui.Enabled = false end)
 closeBtn.MouseButton1Click:Connect(leaveToMenu)
 refreshMenu()
