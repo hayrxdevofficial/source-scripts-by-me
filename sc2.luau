@@ -1,253 +1,304 @@
--- // СКРИПТ FLAPPY BIRD GUI + TOOL ДЛЯ ОТКРЫТИЯ/ЗАКРЫТИЯ
--- // Вставь этот код в LocalScript (StarterGui) или в исполнитель
+-- // FLAPPY BIRD GUI — исправленная версия
+-- Вставь в LocalScript (StarterGui) или в исполнитель
+
+-- Очистка от предыдущего запуска
+if type(_G.__FlappyBirdCleanup) == "function" then
+    pcall(_G.__FlappyBirdCleanup)
+end
 
 local Players = game:GetService("Players")
-local UserInputService = game:GetService("UserInputService")
-local RunService = game:GetService("RunService")
-local TweenService = game:GetService("TweenService")
+local UIS = game:GetService("UserInputService")
+local RS = game:GetService("RunService")
 
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
-local backpack = player:WaitForChild("Backpack")
 
-------------------------------------------------------------
--- 1. СОЗДАНИЕ GUI FLAPPY BIRD
-------------------------------------------------------------
+-- Константы
+local FRAME_W, FRAME_H = 400, 600
+local GROUND_H = 60
+local PLAY_H = FRAME_H - GROUND_H
+local BIRD_X = 100
+local BIRD_SIZE = 30
+local PIPE_W = 50
+local PIPE_GAP = 140
+local GRAVITY = 0.55
+local FLAP = -7.5
+local PIPE_SPEED = 3
+local PIPE_INTERVAL = 2.5
+
+local connections = {}
+local function track(c) table.insert(connections, c); return c end
+
+-- ============ GUI ============
 local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "FlappyBirdGui"
 screenGui.ResetOnSpawn = false
+screenGui.IgnoreGuiInset = true
+screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+screenGui.Enabled = false
 screenGui.Parent = playerGui
-screenGui.Enabled = false -- по умолчанию скрыт
 
--- Основной фрейм (игровое поле)
 local gameFrame = Instance.new("Frame")
-gameFrame.Name = "GameFrame"
-gameFrame.Size = UDim2.new(0, 400, 0, 600)
-gameFrame.Position = UDim2.new(0.5, -200, 0.5, -300)
-gameFrame.BackgroundColor3 = Color3.fromRGB(113, 197, 207) -- небо
+gameFrame.Size = UDim2.new(0, FRAME_W, 0, FRAME_H)
+gameFrame.Position = UDim2.new(0.5, -FRAME_W/2, 0.5, -FRAME_H/2)
+gameFrame.BackgroundColor3 = Color3.fromRGB(113, 197, 207)
 gameFrame.BorderSizePixel = 0
 gameFrame.ClipsDescendants = true
 gameFrame.Parent = screenGui
 
--- Земля
+local closeBtn = Instance.new("TextButton")
+closeBtn.Size = UDim2.new(0, 30, 0, 30)
+closeBtn.Position = UDim2.new(1, -35, 0, 5)
+closeBtn.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+closeBtn.Text = "X"
+closeBtn.TextColor3 = Color3.new(1, 1, 1)
+closeBtn.Font = Enum.Font.GothamBold
+closeBtn.TextScaled = true
+closeBtn.BorderSizePixel = 0
+closeBtn.ZIndex = 10
+closeBtn.Parent = gameFrame
+
+track(closeBtn.MouseButton1Click:Connect(function()
+    screenGui.Enabled = false
+    isPlaying = false
+end))
+
 local ground = Instance.new("Frame")
-ground.Name = "Ground"
-ground.Size = UDim2.new(1, 0, 0, 60)
-ground.Position = UDim2.new(0, 0, 1, -60)
+ground.Size = UDim2.new(1, 0, 0, GROUND_H)
+ground.Position = UDim2.new(0, 0, 1, -GROUND_H)
 ground.BackgroundColor3 = Color3.fromRGB(222, 184, 135)
 ground.BorderSizePixel = 0
+ground.ZIndex = 2
 ground.Parent = gameFrame
 
--- Птица (жёлтый квадрат)
 local bird = Instance.new("Frame")
-bird.Name = "Bird"
-bird.Size = UDim2.new(0, 30, 0, 30)
-bird.Position = UDim2.new(0, 100, 0.5, -15)
+bird.Size = UDim2.new(0, BIRD_SIZE, 0, BIRD_SIZE)
+bird.Position = UDim2.new(0, BIRD_X, 0, 200)
 bird.BackgroundColor3 = Color3.fromRGB(255, 255, 0)
 bird.BorderSizePixel = 0
+bird.ZIndex = 3
 bird.Parent = gameFrame
 
--- Счёт
 local scoreLabel = Instance.new("TextLabel")
-scoreLabel.Name = "Score"
-scoreLabel.Size = UDim2.new(0, 100, 0, 40)
-scoreLabel.Position = UDim2.new(0.5, -50, 0, 10)
+scoreLabel.Size = UDim2.new(0, 120, 0, 50)
+scoreLabel.Position = UDim2.new(0.5, -60, 0, 10)
 scoreLabel.BackgroundTransparency = 1
 scoreLabel.Text = "0"
 scoreLabel.TextColor3 = Color3.new(1, 1, 1)
+scoreLabel.TextStrokeTransparency = 0
 scoreLabel.TextScaled = true
 scoreLabel.Font = Enum.Font.GothamBold
+scoreLabel.ZIndex = 5
 scoreLabel.Parent = gameFrame
 
--- Текст Game Over
 local gameOverLabel = Instance.new("TextLabel")
-gameOverLabel.Name = "GameOver"
 gameOverLabel.Size = UDim2.new(1, 0, 0, 80)
 gameOverLabel.Position = UDim2.new(0, 0, 0.4, 0)
 gameOverLabel.BackgroundTransparency = 1
-gameOverLabel.Text = "GAME OVER"
-gameOverLabel.TextColor3 = Color3.fromRGB(255, 0, 0)
+gameOverLabel.Text = "GAME OVER\n(клик — заново)"
+gameOverLabel.TextColor3 = Color3.fromRGB(255, 40, 40)
+gameOverLabel.TextStrokeTransparency = 0
 gameOverLabel.TextScaled = true
 gameOverLabel.Font = Enum.Font.GothamBold
 gameOverLabel.Visible = false
+gameOverLabel.ZIndex = 6
 gameOverLabel.Parent = gameFrame
 
-------------------------------------------------------------
--- 2. ЛОГИКА ИГРЫ
-------------------------------------------------------------
-local gravity = 0.5
-local flapPower = -7
+-- ============ Состояние игры ============
+local isPlaying = false
 local birdVelocity = 0
 local score = 0
-local isPlaying = false
 local pipes = {}
+local gameGen = 0
 
--- Функция создания трубы
+local function clearPipes()
+    for _, p in ipairs(pipes) do
+        if p.top and p.top.Parent then p.top:Destroy() end
+        if p.bottom and p.bottom.Parent then p.bottom:Destroy() end
+    end
+    pipes = {}
+end
+
 local function createPipe()
-    local gap = 120
-    local pipeWidth = 50
-    local minHeight = 60
-    local maxHeight = 380
-    local gapY = math.random(minHeight, maxHeight)
+    local minGapY = 60
+    local maxGapY = PLAY_H - PIPE_GAP - 60
+    local gapY = math.random(minGapY, maxGapY)
 
-    local topPipe = Instance.new("Frame")
-    topPipe.Name = "TopPipe"
-    topPipe.Size = UDim2.new(0, pipeWidth, 0, gapY)
-    topPipe.Position = UDim2.new(1, 0, 0, 0)
-    topPipe.BackgroundColor3 = Color3.fromRGB(0, 180, 0)
-    topPipe.BorderSizePixel = 0
-    topPipe.Parent = gameFrame
+    -- ВАЖНО: ТОЛЬКО Offset (Scale = 0), чтобы координаты читались однозначно
+    local top = Instance.new("Frame")
+    top.Size = UDim2.new(0, PIPE_W, 0, gapY)
+    top.Position = UDim2.new(0, FRAME_W, 0, 0)
+    top.BackgroundColor3 = Color3.fromRGB(0, 180, 0)
+    top.BorderSizePixel = 0
+    top.ZIndex = 1
+    top.Parent = gameFrame
 
-    local bottomPipe = Instance.new("Frame")
-    bottomPipe.Name = "BottomPipe"
-    bottomPipe.Size = UDim2.new(0, pipeWidth, 0, 600 - gapY - gap)
-    bottomPipe.Position = UDim2.new(1, 0, 0, gapY + gap)
-    bottomPipe.BackgroundColor3 = Color3.fromRGB(0, 180, 0)
-    bottomPipe.BorderSizePixel = 0
-    bottomPipe.Parent = gameFrame
+    local bottomHeight = PLAY_H - gapY - PIPE_GAP
+    local bottom = Instance.new("Frame")
+    bottom.Size = UDim2.new(0, PIPE_W, 0, bottomHeight)
+    bottom.Position = UDim2.new(0, FRAME_W, 0, gapY + PIPE_GAP)
+    bottom.BackgroundColor3 = Color3.fromRGB(0, 180, 0)
+    bottom.BorderSizePixel = 0
+    bottom.ZIndex = 1
+    bottom.Parent = gameFrame
 
-    table.insert(pipes, {top = topPipe, bottom = bottomPipe, passed = false})
+    table.insert(pipes, { top = top, bottom = bottom, passed = false })
 
-    -- Движение трубы
-    local speed = 3
-    local connection
-    connection = RunService.RenderStepped:Connect(function()
-        if not isPlaying or not topPipe.Parent then
-            connection:Disconnect()
-            return
+    local myGen = gameGen
+    local conn
+    conn = RS.RenderStepped:Connect(function(dt)
+        if not isPlaying or gameGen ~= myGen or not top.Parent then
+            conn:Disconnect(); return
         end
-        topPipe.Position = topPipe.Position - UDim2.new(0, speed, 0, 0)
-        bottomPipe.Position = bottomPipe.Position - UDim2.new(0, speed, 0, 0)
-
-        -- Удаление, когда труба ушла за экран
-        if topPipe.Position.X.Offset < -100 then
-            topPipe:Destroy()
-            bottomPipe:Destroy()
-            connection:Disconnect()
+        local step = math.clamp(dt * 60, 0, 3)
+        local dx = PIPE_SPEED * step
+        top.Position = top.Position - UDim2.new(0, dx, 0, 0)
+        bottom.Position = bottom.Position - UDim2.new(0, dx, 0, 0)
+        if top.Position.X.Offset < -PIPE_W - 20 then
+            top:Destroy(); bottom:Destroy(); conn:Disconnect()
         end
     end)
 end
 
--- Сброс игры
 local function resetGame()
-    -- Очистка труб
-    for _, pipePair in pairs(pipes) do
-        if pipePair.top then pipePair.top:Destroy() end
-        if pipePair.bottom then pipePair.bottom:Destroy() end
-    end
-    pipes = {}
+    gameGen = gameGen + 1
+    local myGen = gameGen
 
-    bird.Position = UDim2.new(0, 100, 0.5, -15)
+    clearPipes()
+    bird.Position = UDim2.new(0, BIRD_X, 0, 200)
     birdVelocity = 0
     score = 0
     scoreLabel.Text = "0"
     gameOverLabel.Visible = false
     isPlaying = true
 
-    -- Спавн труб
     task.spawn(function()
-        while isPlaying do
+        while isPlaying and gameGen == myGen do
             createPipe()
-            task.wait(2.5)
+            task.wait(PIPE_INTERVAL)
         end
     end)
 end
 
--- Прыжок
 local function flap()
     if not isPlaying then
         resetGame()
+        birdVelocity = FLAP
         return
     end
-    birdVelocity = flapPower
+    birdVelocity = FLAP
 end
 
--- Обновление физики
-RunService.RenderStepped:Connect(function()
+local function endGame()
     if not isPlaying then return end
+    isPlaying = false
+    gameOverLabel.Visible = true
+end
 
-    -- Гравитация
-    birdVelocity = birdVelocity + gravity
-    bird.Position = bird.Position + UDim2.new(0, 0, 0, birdVelocity)
+-- ============ Физика (FPS-independent) ============
+track(RS.RenderStepped:Connect(function(dt)
+    if not isPlaying then return end
+    local step = math.clamp(dt * 60, 0, 3)
 
-    -- Ограничение по верхней границе
-    if bird.Position.Y.Offset < 0 then
-        bird.Position = UDim2.new(0, 100, 0, 0)
-        birdVelocity = 0
+    birdVelocity = birdVelocity + GRAVITY * step
+    local newY = bird.Position.Y.Offset + birdVelocity * step
+
+    if newY < 0 then newY = 0; birdVelocity = 0 end
+    if newY + BIRD_SIZE >= PLAY_H then
+        bird.Position = UDim2.new(0, BIRD_X, 0, PLAY_H - BIRD_SIZE)
+        endGame(); return
     end
+    bird.Position = UDim2.new(0, BIRD_X, 0, newY)
 
-    -- Столкновение с землёй
-    if bird.Position.Y.Offset + bird.Size.Y.Offset >= gameFrame.Size.Y.Offset - ground.Size.Y.Offset then
-        isPlaying = false
-        gameOverLabel.Visible = true
-        return
-    end
+    local bx, by = BIRD_X, newY
+    local bx2, by2 = bx + BIRD_SIZE, by + BIRD_SIZE
 
-    -- Проверка столкновений с трубами и подсчёт очков
-    for _, pipePair in pairs(pipes) do
-        if pipePair.top and pipePair.top.Parent then
-            local top = pipePair.top
-            local bottom = pipePair.bottom
-            local birdX = bird.Position.X.Offset
-            local birdY = bird.Position.Y.Offset
-            local birdW = bird.Size.X.Offset
-            local birdH = bird.Size.Y.Offset
-
-            local pipeX = top.Position.X.Offset
-            local pipeW = top.Size.X.Offset
-
-            -- Столкновение (AABB)
-            if birdX + birdW > pipeX and birdX < pipeX + pipeW then
-                local topH = top.Size.Y.Offset
-                local bottomY = bottom.Position.Y.Offset
-                if birdY < topH or birdY + birdH > bottomY then
-                    isPlaying = false
-                    gameOverLabel.Visible = true
-                    return
+    for i = #pipes, 1, -1 do
+        local p = pipes[i]
+        if not p.top.Parent then
+            table.remove(pipes, i)
+        else
+            local px = p.top.Position.X.Offset
+            local px2 = px + PIPE_W
+            if bx2 > px and bx < px2 then
+                local topH = p.top.Size.Y.Offset
+                local botY = p.bottom.Position.Y.Offset
+                if by < topH or by2 > botY then
+                    endGame(); return
                 end
             end
-
-            -- Очко за прохождение трубы
-            if not pipePair.passed and pipeX + pipeW < birdX then
-                pipePair.passed = true
+            if not p.passed and px2 < bx then
+                p.passed = true
                 score = score + 1
                 scoreLabel.Text = tostring(score)
             end
         end
     end
-end)
+end))
 
-------------------------------------------------------------
--- 3. ИНСТРУМЕНТ ДЛЯ ОТКРЫТИЯ/ЗАКРЫТИЯ GUI
-------------------------------------------------------------
-local tool = Instance.new("Tool")
-tool.Name = "FlappyBirdOpener"
-tool.RequiresHandle = false
-tool.CanBeDropped = false
-tool.Parent = backpack
-
-tool.Activated:Connect(function()
-    screenGui.Enabled = not screenGui.Enabled
-    if screenGui.Enabled then
-        -- При открытии запускаем игру (или сбрасываем)
-        isPlaying = false
-        resetGame()
-    else
-        -- При закрытии останавливаем
-        isPlaying = false
-    end
-end)
-
-------------------------------------------------------------
--- 4. УПРАВЛЕНИЕ (ПРОБЕЛ / КЛИК ПО ЭКРАНУ)
-------------------------------------------------------------
-UserInputService.InputBegan:Connect(function(input, gameProcessed)
+-- ============ Управление ============
+track(UIS.InputBegan:Connect(function(input, gameProcessed)
     if gameProcessed then return end
     if not screenGui.Enabled then return end
-
-    if input.KeyCode == Enum.KeyCode.Space or input.UserInputType == Enum.UserInputType.MouseButton1 then
+    if input.KeyCode == Enum.KeyCode.Space
+        or input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch then
         flap()
     end
-end)
+end))
 
-print("[FlappyBird] Скрипт загружен. Возьми инструмент 'FlappyBirdOpener' в рюкзаке и активируй его (клик), чтобы открыть/закрыть игру. Пробел или клик по экрану — прыжок.")
+-- ============ Инструмент ============
+local function makeTool()
+    local bp = player:FindFirstChildOfClass("Backpack")
+    if not bp then return end
+
+    local old = bp:FindFirstChild("FlappyBirdOpener")
+    if old then old:Destroy() end
+
+    local t = Instance.new("Tool")
+    t.Name = "FlappyBirdOpener"
+    t.RequiresHandle = false
+    t.CanBeDropped = false
+    t.ToolTip = "Flappy Bird (клик — открыть/закрыть)"
+
+    t.Activated:Connect(function()
+        screenGui.Enabled = not screenGui.Enabled
+        if screenGui.Enabled then
+            resetGame()
+        else
+            isPlaying = false
+        end
+    end)
+
+    t.Parent = bp
+end
+
+makeTool()
+
+track(player.CharacterAdded:Connect(function()
+    task.wait(0.5)
+    makeTool()
+end))
+
+-- ============ Cleanup ============
+local function cleanup()
+    for _, c in ipairs(connections) do
+        pcall(function() c:Disconnect() end)
+    end
+    connections = {}
+    if screenGui then pcall(function() screenGui:Destroy() end) end
+
+    local bp = player:FindFirstChildOfClass("Backpack")
+    if bp then
+        local t = bp:FindFirstChild("FlappyBirdOpener")
+        if t then pcall(function() t:Destroy() end) end
+    end
+    local char = player.Character
+    if char then
+        local t = char:FindFirstChild("FlappyBirdOpener")
+        if t then pcall(function() t:Destroy() end) end
+    end
+end
+_G.__FlappyBirdCleanup = cleanup
+
+print("[FlappyBird] Готово. Возьми инструмент 'FlappyBirdOpener' → клик = вкл/выкл. Пробел/клик = флап.")
