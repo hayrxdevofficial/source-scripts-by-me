@@ -1,159 +1,227 @@
--- // FLING SPIN SCRIPT + UI //
--- Вставьте этот код в ваш executor.
-
+-- // FLING SPIN v2 — целое тело + перетаскиваемое меню + удаление старого //
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
+local UIS = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
 
--- ================== НАСТРОЙКИ ==================
-local SPIN_SPEED = 999999  -- Огромная скорость вращения (можно менять)
-local FLING_ENABLED = false
--- ================================================
+-- ================== УДАЛЯЕМ СТАРОЕ МЕНЮ ==================
+local old = game.CoreGui:FindFirstChild("FlingSpinGui")
+if old then old:Destroy() end
+local old2 = LocalPlayer:WaitForChild("PlayerGui"):FindFirstChild("FlingSpinGui")
+if old2 then old2:Destroy() end
+-- =========================================================
 
--- Создание GUI
+local DEFAULT_SPEED = 400   -- рад/с. Подбирай: 200–1500. Больше = опаснее.
+local FLING_ENABLED = false
+local currentAngular = nil
+
+-- ================== UI ==================
 local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "FlingSpinGui"
 screenGui.ResetOnSpawn = false
 screenGui.Parent = game.CoreGui
 
--- Кнопка открытия/закрытия (в правом нижнем углу)
+-- Кнопка открытия/закрытия
 local toggleBtn = Instance.new("TextButton")
-toggleBtn.Name = "ToggleButton"
 toggleBtn.Size = UDim2.new(0, 50, 0, 50)
-toggleBtn.Position = UDim2.new(1, -60, 1, -60) -- Правый нижний угол
+toggleBtn.Position = UDim2.new(1, -60, 1, -60)
 toggleBtn.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
-toggleBtn.BackgroundTransparency = 0.2
 toggleBtn.Text = "⚙"
-toggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+toggleBtn.TextColor3 = Color3.fromRGB(255,255,255)
 toggleBtn.TextSize = 30
 toggleBtn.Font = Enum.Font.GothamBold
 toggleBtn.Parent = screenGui
+Instance.new("UICorner", toggleBtn).CornerRadius = UDim.new(0,10)
 
-local corner = Instance.new("UICorner")
-corner.CornerRadius = UDim.new(0, 10)
-corner.Parent = toggleBtn
-
--- Основное меню (скрыто изначально)
+-- Основное меню
 local mainFrame = Instance.new("Frame")
-mainFrame.Name = "MainFrame"
-mainFrame.Size = UDim2.new(0, 250, 0, 180)
-mainFrame.Position = UDim2.new(0.5, -125, 0.5, -90) -- По центру
+mainFrame.Size = UDim2.new(0, 280, 0, 240)
+mainFrame.Position = UDim2.new(0.5, -140, 0.5, -120)
 mainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
-mainFrame.BackgroundTransparency = 0.1
 mainFrame.BorderSizePixel = 0
 mainFrame.Visible = false
+mainFrame.Active = true
 mainFrame.Parent = screenGui
+Instance.new("UICorner", mainFrame).CornerRadius = UDim.new(0, 12)
 
-local frameCorner = Instance.new("UICorner")
-frameCorner.CornerRadius = UDim.new(0, 12)
-frameCorner.Parent = mainFrame
+-- Заголовок (за него тянем)
+local titleBar = Instance.new("TextButton")
+titleBar.Size = UDim2.new(1, 0, 0, 40)
+titleBar.BackgroundTransparency = 1
+titleBar.Text = "FLING SPIN MENU"
+titleBar.TextColor3 = Color3.fromRGB(255, 80, 80)
+titleBar.TextSize = 18
+titleBar.Font = Enum.Font.GothamBold
+titleBar.Parent = mainFrame
 
-local title = Instance.new("TextLabel")
-title.Size = UDim2.new(1, 0, 0, 40)
-title.BackgroundTransparency = 1
-title.Text = "FLING SPIN MENU"
-title.TextColor3 = Color3.fromRGB(255, 80, 80)
-title.TextSize = 18
-title.Font = Enum.Font.GothamBold
-title.Parent = mainFrame
+-- Перетаскивание
+local dragging, dragInput, dragStart, startPos
+titleBar.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = true
+        dragStart = input.Position
+        startPos = mainFrame.Position
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then dragging = false end
+        end)
+    end
+end)
+titleBar.InputChanged:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+        dragInput = input
+    end
+end)
+UIS.InputChanged:Connect(function(input)
+    if input == dragInput and dragging then
+        local delta = input.Position - dragStart
+        mainFrame.Position = UDim2.new(
+            startPos.X.Scale, startPos.X.Offset + delta.X,
+            startPos.Y.Scale, startPos.Y.Offset + delta.Y
+        )
+    end
+end)
 
--- Кнопка включения/выключения флинга
+-- Кнопка флинга
 local flingBtn = Instance.new("TextButton")
-flingBtn.Size = UDim2.new(0.8, 0, 0, 45)
-flingBtn.Position = UDim2.new(0.1, 0, 0.3, 0)
+flingBtn.Size = UDim2.new(0.85, 0, 0, 42)
+flingBtn.Position = UDim2.new(0.075, 0, 0.22, 0)
 flingBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 70)
 flingBtn.Text = "FLING: OFF"
-flingBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+flingBtn.TextColor3 = Color3.fromRGB(255,255,255)
 flingBtn.TextSize = 16
 flingBtn.Font = Enum.Font.GothamBold
 flingBtn.Parent = mainFrame
+Instance.new("UICorner", flingBtn).CornerRadius = UDim.new(0, 8)
 
-local flingCorner = Instance.new("UICorner")
-flingCorner.CornerRadius = UDim.new(0, 8)
-flingCorner.Parent = flingBtn
+-- Ползунок скорости
+local speedLabel = Instance.new("TextLabel")
+speedLabel.Size = UDim2.new(1, 0, 0, 20)
+speedLabel.Position = UDim2.new(0, 0, 0.48, 0)
+speedLabel.BackgroundTransparency = 1
+speedLabel.Text = "Скорость: " .. DEFAULT_SPEED
+speedLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+speedLabel.TextSize = 13
+speedLabel.Font = Enum.Font.Gotham
+speedLabel.Parent = mainFrame
 
--- Кнопка закрытия меню
+local sliderBg = Instance.new("Frame")
+sliderBg.Size = UDim2.new(0.85, 0, 0, 8)
+sliderBg.Position = UDim2.new(0.075, 0, 0.62, 0)
+sliderBg.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
+sliderBg.BorderSizePixel = 0
+sliderBg.Parent = mainFrame
+Instance.new("UICorner", sliderBg).CornerRadius = UDim.new(1, 0)
+
+local sliderFill = Instance.new("Frame")
+sliderFill.Size = UDim2.new(0.25, 0, 1, 0) -- начальное положение = 400 из 1500
+sliderFill.BackgroundColor3 = Color3.fromRGB(200, 80, 80)
+sliderFill.BorderSizePixel = 0
+sliderFill.Parent = sliderBg
+Instance.new("UICorner", sliderFill).CornerRadius = UDim.new(1, 0)
+
+local function updateSpeedFromX(x)
+    local rel = math.clamp((x - sliderBg.AbsolutePosition.X) / sliderBg.AbsoluteSize.X, 0, 1)
+    sliderFill.Size = UDim2.new(rel, 0, 1, 0)
+    local speed = math.floor(100 + rel * 1400) -- 100..1500
+    speedLabel.Text = "Скорость: " .. speed
+    if currentAngular then
+        currentAngular.AngularVelocity = Vector3.new(0, speed, 0)
+    end
+end
+
+sliderBg.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        updateSpeedFromX(input.Position.X)
+        local conn
+        conn = UIS.InputChanged:Connect(function(i)
+            if i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch then
+                updateSpeedFromX(i.Position.X)
+            end
+        end)
+        UIS.InputEnded:Connect(function(i)
+            if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+                if conn then conn:Disconnect() end
+            end
+        end)
+    end
+end)
+
+-- Кнопка закрытия
 local closeBtn = Instance.new("TextButton")
-closeBtn.Size = UDim2.new(0.8, 0, 0, 35)
-closeBtn.Position = UDim2.new(0.1, 0, 0.7, 0)
+closeBtn.Size = UDim2.new(0.85, 0, 0, 32)
+closeBtn.Position = UDim2.new(0.075, 0, 0.78, 0)
 closeBtn.BackgroundColor3 = Color3.fromRGB(80, 40, 40)
 closeBtn.Text = "CLOSE"
-closeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+closeBtn.TextColor3 = Color3.fromRGB(255,255,255)
 closeBtn.TextSize = 14
 closeBtn.Font = Enum.Font.Gotham
 closeBtn.Parent = mainFrame
+Instance.new("UICorner", closeBtn).CornerRadius = UDim.new(0, 6)
 
-local closeCorner = Instance.new("UICorner")
-closeCorner.CornerRadius = UDim.new(0, 6)
-closeCorner.Parent = closeBtn
+toggleBtn.MouseButton1Click:Connect(function() mainFrame.Visible = not mainFrame.Visible end)
+closeBtn.MouseButton1Click:Connect(function() mainFrame.Visible = false end)
 
--- Функция переключения видимости меню
-local function toggleMenu()
-    mainFrame.Visible = not mainFrame.Visible
-end
+-- ================== ЛОГИКА СПИНА ==================
+-- ВАЖНО: ничего не удаляем. Только отключаем коллизию у всех частей, кроме HRP.
+-- Крутится вся сборка (все Motor6D-части вращаются вместе с HRP).
+-- AutoRotate = false, чтобы Humanoid не боролся с вращением — ходьба работает
+-- через MoveDirection от камеры.
 
-toggleBtn.MouseButton1Click:Connect(toggleMenu)
-closeBtn.MouseButton1Click:Connect(toggleMenu)
-
--- ================== ЛОГИКА ФЛИНГА ==================
 local function applyFling(enable)
     local char = LocalPlayer.Character
     if not char then return end
     local hrp = char:FindFirstChild("HumanoidRootPart")
-    if not hrp then return end
+    local hum = char:FindFirstChildOfClass("Humanoid")
 
     if enable then
-        -- Удаляем все части, кроме HumanoidRootPart, чтобы только он сталкивался
-        for _, part in pairs(char:GetChildren()) do
-            if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
-                part:Destroy()
+        if hum then
+            hum.AutoRotate = false
+            -- чтобы физика не «убивала» при жёстком спине
+            hum.PlatformStand = false
+        end
+        -- Отключаем коллизии у всех частей кроме HRP → тело не разрывает,
+        -- но столкновение всё равно передаёт огромный момент.
+        for _, p in ipairs(char:GetDescendants()) do
+            if p:IsA("BasePart") and p.Name ~= "HumanoidRootPart" then
+                p.CanCollide = false
             end
         end
-
-        -- Отключаем коллизию у HRP? Нет, оставляем включенной, чтобы сталкиваться.
-        hrp.CanCollide = true
-
-        -- Добавляем огромную угловую скорость
-        local angular = Instance.new("BodyAngularVelocity")
-        angular.Name = "FlingAngular"
-        angular.AngularVelocity = Vector3.new(0, SPIN_SPEED, 0) -- Вращение вокруг оси Y
-        angular.MaxTorque = Vector3.new(math.huge, math.huge, math.huge)
-        angular.P = 100000
-        angular.Parent = hrp
-
-        -- (Опционально) Добавляем линейную скорость, чтобы было сложнее остановиться
-        -- local linear = Instance.new("BodyVelocity")
-        -- linear.Velocity = Vector3.new(0, 0, 0)
-        -- linear.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
-        -- linear.Parent = hrp
+        if hrp and not hrp:FindFirstChild("FlingAngular") then
+            local ang = Instance.new("BodyAngularVelocity")
+            ang.Name = "FlingAngular"
+            ang.AngularVelocity = Vector3.new(0, DEFAULT_SPEED, 0)
+            ang.MaxTorque = Vector3.new(math.huge, math.huge, math.huge)
+            ang.P = 100000
+            ang.Parent = hrp
+            currentAngular = ang
+        end
     else
-        -- Выключаем: удаляем BodyAngularVelocity и перезагружаем персонажа
-        local angular = hrp:FindFirstChild("FlingAngular")
-        if angular then angular:Destroy() end
-        -- Перезагрузка персонажа для восстановления частей
-        LocalPlayer:LoadCharacter()
+        if hrp then
+            local ang = hrp:FindFirstChild("FlingAngular")
+            if ang then ang:Destroy() end
+        end
+        currentAngular = nil
+        for _, p in ipairs(char:GetDescendants()) do
+            if p:IsA("BasePart") then p.CanCollide = true end
+        end
+        if hum then hum.AutoRotate = true end
     end
 end
 
--- Обработчик кнопки флинга
 flingBtn.MouseButton1Click:Connect(function()
     FLING_ENABLED = not FLING_ENABLED
     if FLING_ENABLED then
-        flingBtn.Text = "FLING: ON (ОПАСНО)"
+        flingBtn.Text = "FLING: ON"
         flingBtn.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
-        applyFling(true)
     else
         flingBtn.Text = "FLING: OFF"
         flingBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 70)
-        applyFling(false)
     end
+    applyFling(FLING_ENABLED)
 end)
 
--- Следим за респавном: если персонаж перезагрузился, а флинг был включён,
--- нужно применить его снова (опционально, можно убрать).
-LocalPlayer.CharacterAdded:Connect(function(char)
-    if FLING_ENABLED then
-        task.wait(0.5)
-        applyFling(true)
-    end
+-- Авто-применение после респавна
+LocalPlayer.CharacterAdded:Connect(function()
+    task.wait(0.5)
+    if FLING_ENABLED then applyFling(true) end
 end)
