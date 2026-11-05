@@ -1,61 +1,62 @@
--- // SAFE SPIN v3 — защита от смерти + перетаскиваемое меню + удаление старого //
+-- // REANIMATE FLY / HIDE LEGS //
+-- Вставьте этот код в ваш executor.
+-- ВНИМАНИЕ: Техника реанимации может не работать на очень новых играх с защитой.
+
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
-local UIS = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
+local UIS = game:GetService("UserInputService")
 
--- ================== УДАЛЯЕМ СТАРОЕ МЕНЮ ==================
-local old = game.CoreGui:FindFirstChild("SafeSpinGui")
-if old then old:Destroy() end
-local old2 = LocalPlayer:WaitForChild("PlayerGui"):FindFirstChild("SafeSpinGui")
-if old2 then old2:Destroy() end
--- =========================================================
+-- ================== НАСТРОЙКИ ==================
+local FLY_SPEED = 60          -- Скорость полёта
+local HIDE_LEGS = true       -- Скрыть ноги (спрятать в торс)
+local FLY_ENABLED = false
+local LEG_OFFSET = Vector3.new(0, 0, 0) -- Смещение ног внутрь торса
+-- ================================================
 
-local DEFAULT_SPEED = 180   -- СНИЖЕНО! Начни с 180, повышай осторожно (макс. 600)
-local FLING_ENABLED = false
-local currentAngular = nil
-local deathConnection = nil
+-- Удаляем старые версии меню, чтобы не было дублей
+local oldGui = game.CoreGui:FindFirstChild("ReanimateFlyGui")
+if oldGui then oldGui:Destroy() end
 
 -- ================== UI ==================
 local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "SafeSpinGui"
+screenGui.Name = "ReanimateFlyGui"
 screenGui.ResetOnSpawn = false
 screenGui.Parent = game.CoreGui
 
--- Кнопка открытия/закрытия
+-- Кнопка в правом нижнем углу
 local toggleBtn = Instance.new("TextButton")
 toggleBtn.Size = UDim2.new(0, 50, 0, 50)
 toggleBtn.Position = UDim2.new(1, -60, 1, -60)
-toggleBtn.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
-toggleBtn.Text = "⚙"
-toggleBtn.TextColor3 = Color3.fromRGB(255,255,255)
-toggleBtn.TextSize = 30
+toggleBtn.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
+toggleBtn.Text = "🜁"
+toggleBtn.TextColor3 = Color3.fromRGB(150, 220, 255)
+toggleBtn.TextSize = 28
 toggleBtn.Font = Enum.Font.GothamBold
 toggleBtn.Parent = screenGui
-Instance.new("UICorner", toggleBtn).CornerRadius = UDim.new(0,10)
+Instance.new("UICorner", toggleBtn).CornerRadius = UDim.new(0, 10)
 
 -- Основное меню
 local mainFrame = Instance.new("Frame")
-mainFrame.Size = UDim2.new(0, 280, 0, 260)
-mainFrame.Position = UDim2.new(0.5, -140, 0.5, -130)
-mainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
+mainFrame.Size = UDim2.new(0, 260, 0, 220)
+mainFrame.Position = UDim2.new(0.5, -130, 0.5, -110)
+mainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 26)
 mainFrame.BorderSizePixel = 0
 mainFrame.Visible = false
 mainFrame.Active = true
 mainFrame.Parent = screenGui
 Instance.new("UICorner", mainFrame).CornerRadius = UDim.new(0, 12)
 
--- Заголовок (за него тянем)
+-- Заголовок (перетаскивание)
 local titleBar = Instance.new("TextButton")
 titleBar.Size = UDim2.new(1, 0, 0, 40)
 titleBar.BackgroundTransparency = 1
-titleBar.Text = "SAFE SPIN MENU"
-titleBar.TextColor3 = Color3.fromRGB(80, 255, 120)
+titleBar.Text = "NO-LEGS FLY"
+titleBar.TextColor3 = Color3.fromRGB(150, 220, 255)
 titleBar.TextSize = 18
 titleBar.Font = Enum.Font.GothamBold
 titleBar.Parent = mainFrame
 
--- Перетаскивание
 local dragging, dragInput, dragStart, startPos
 titleBar.InputBegan:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
@@ -82,78 +83,25 @@ UIS.InputChanged:Connect(function(input)
     end
 end)
 
--- Кнопка флинга
-local flingBtn = Instance.new("TextButton")
-flingBtn.Size = UDim2.new(0.85, 0, 0, 42)
-flingBtn.Position = UDim2.new(0.075, 0, 0.22, 0)
-flingBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 70)
-flingBtn.Text = "SPIN: OFF"
-flingBtn.TextColor3 = Color3.fromRGB(255,255,255)
-flingBtn.TextSize = 16
-flingBtn.Font = Enum.Font.GothamBold
-flingBtn.Parent = mainFrame
-Instance.new("UICorner", flingBtn).CornerRadius = UDim.new(0, 8)
-
--- Ползунок скорости
-local speedLabel = Instance.new("TextLabel")
-speedLabel.Size = UDim2.new(1, 0, 0, 20)
-speedLabel.Position = UDim2.new(0, 0, 0.48, 0)
-speedLabel.BackgroundTransparency = 1
-speedLabel.Text = "Скорость: " .. DEFAULT_SPEED
-speedLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
-speedLabel.TextSize = 13
-speedLabel.Font = Enum.Font.Gotham
-speedLabel.Parent = mainFrame
-
-local sliderBg = Instance.new("Frame")
-sliderBg.Size = UDim2.new(0.85, 0, 0, 8)
-sliderBg.Position = UDim2.new(0.075, 0, 0.62, 0)
-sliderBg.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
-sliderBg.BorderSizePixel = 0
-sliderBg.Parent = mainFrame
-Instance.new("UICorner", sliderBg).CornerRadius = UDim.new(1, 0)
-
-local sliderFill = Instance.new("Frame")
-sliderFill.Size = UDim2.new(0.1, 0, 1, 0) -- начальное положение (180 из 600 ~ 0.1)
-sliderFill.BackgroundColor3 = Color3.fromRGB(80, 200, 120)
-sliderFill.BorderSizePixel = 0
-sliderFill.Parent = sliderBg
-Instance.new("UICorner", sliderFill).CornerRadius = UDim.new(1, 0)
-
-local function updateSpeedFromX(x)
-    local rel = math.clamp((x - sliderBg.AbsolutePosition.X) / sliderBg.AbsoluteSize.X, 0, 1)
-    sliderFill.Size = UDim2.new(rel, 0, 1, 0)
-    local speed = math.floor(60 + rel * 540) -- 60..600
-    speedLabel.Text = "Скорость: " .. speed
-    if currentAngular then
-        currentAngular.AngularVelocity = Vector3.new(0, speed, 0)
-    end
-end
-
-sliderBg.InputBegan:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-        updateSpeedFromX(input.Position.X)
-        local conn
-        conn = UIS.InputChanged:Connect(function(i)
-            if i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch then
-                updateSpeedFromX(i.Position.X)
-            end
-        end)
-        UIS.InputEnded:Connect(function(i)
-            if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
-                if conn then conn:Disconnect() end
-            end
-        end)
-    end
-end)
+-- Кнопка включения/выключения
+local flyBtn = Instance.new("TextButton")
+flyBtn.Size = UDim2.new(0.85, 0, 0, 42)
+flyBtn.Position = UDim2.new(0.075, 0, 0.25, 0)
+flyBtn.BackgroundColor3 = Color3.fromRGB(50, 80, 110)
+flyBtn.Text = "FLY: OFF"
+flyBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+flyBtn.TextSize = 16
+flyBtn.Font = Enum.Font.GothamBold
+flyBtn.Parent = mainFrame
+Instance.new("UICorner", flyBtn).CornerRadius = UDim.new(0, 8)
 
 -- Кнопка закрытия
 local closeBtn = Instance.new("TextButton")
 closeBtn.Size = UDim2.new(0.85, 0, 0, 32)
-closeBtn.Position = UDim2.new(0.075, 0, 0.85, 0)
+closeBtn.Position = UDim2.new(0.075, 0, 0.7, 0)
 closeBtn.BackgroundColor3 = Color3.fromRGB(80, 40, 40)
 closeBtn.Text = "CLOSE"
-closeBtn.TextColor3 = Color3.fromRGB(255,255,255)
+closeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
 closeBtn.TextSize = 14
 closeBtn.Font = Enum.Font.Gotham
 closeBtn.Parent = mainFrame
@@ -162,98 +110,180 @@ Instance.new("UICorner", closeBtn).CornerRadius = UDim.new(0, 6)
 toggleBtn.MouseButton1Click:Connect(function() mainFrame.Visible = not mainFrame.Visible end)
 closeBtn.MouseButton1Click:Connect(function() mainFrame.Visible = false end)
 
--- ================== ЛОГИКА БЕЗОПАСНОГО ВРАЩЕНИЯ ==================
-local function getHRP()
-    local char = LocalPlayer.Character
-    return char and char:FindFirstChild("HumanoidRootPart")
-end
+-- ================== ЛОГИКА РЕАНИМАЦИИ И ПОЛЁТА ==================
+local flyVelocity = nil
+local bodyGyro = nil
+local legHiddenConnection = nil
 
-local function getHum()
-    local char = LocalPlayer.Character
-    return char and char:FindFirstChildOfClass("Humanoid")
-end
+-- Функция для скрытия ног (перемещение внутрь торса)
+local function hideLegs(enable)
+    local character = LocalPlayer.Character
+    if not character then return end
+    local torso = character:FindFirstChild("Torso") or character:FindFirstChild("UpperTorso")
+    if not torso then return end
 
--- Защита: если здоровье падает, отключаем спин
-local function setupDeathProtection()
-    local hum = getHum()
-    if hum and not deathConnection then
-        deathConnection = hum.HealthChanged:Connect(function(health)
-            if health < hum.MaxHealth * 0.5 and FLING_ENABLED then
-                -- Если здоровье упало ниже 50%, принудительно выключаем спин
-                FLING_ENABLED = false
-                flingBtn.Text = "SPIN: OFF (ЗАЩИТА)"
-                flingBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 70)
-                applySpin(false)
+    local leftLeg = character:FindFirstChild("Left Leg") or character:FindFirstChild("LeftUpperLeg")
+    local rightLeg = character:FindFirstChild("Right Leg") or character:FindFirstChild("RightUpperLeg")
+    if not leftLeg or not rightLeg then return end
+
+    -- Находим суставы (Motor6D) для ног
+    local leftHip = torso:FindFirstChild("Left Hip") or torso:FindFirstChild("LeftUpperLeg")
+    local rightHip = torso:FindFirstChild("Right Hip") or torso:FindFirstChild("RightUpperLeg")
+
+    if enable then
+        -- Сохраняем оригинальные C0 и C1, если ещё не сохранили
+        if not leftLeg:GetAttribute("OrigC0") then
+            if leftHip then
+                leftLeg:SetAttribute("OrigC0", leftHip.C0)
+                leftLeg:SetAttribute("OrigC1", leftHip.C1)
             end
-        end)
+            if rightHip then
+                rightLeg:SetAttribute("OrigC0", rightHip.C0)
+                rightLeg:SetAttribute("OrigC1", rightHip.C1)
+            end
+        end
+        -- Смещаем суставы так, чтобы ноги ушли внутрь торса
+        if leftHip then
+            leftHip.C0 = CFrame.new(LEG_OFFSET) * leftHip.C0
+        end
+        if rightHip then
+            rightHip.C0 = CFrame.new(LEG_OFFSET) * rightHip.C0
+        end
+        -- Делаем ноги невидимыми и отключаем коллизию
+        leftLeg.Transparency = 1
+        rightLeg.Transparency = 1
+        leftLeg.CanCollide = false
+        rightLeg.CanCollide = false
+    else
+        -- Восстанавливаем всё обратно
+        if leftHip and leftLeg:GetAttribute("OrigC0") then
+            leftHip.C0 = leftLeg:GetAttribute("OrigC0")
+            leftHip.C1 = leftLeg:GetAttribute("OrigC1")
+        end
+        if rightHip and rightLeg:GetAttribute("OrigC0") then
+            rightHip.C0 = rightLeg:GetAttribute("OrigC0")
+            rightHip.C1 = rightLeg:GetAttribute("OrigC1")
+        end
+        leftLeg.Transparency = 0
+        rightLeg.Transparency = 0
+        leftLeg.CanCollide = true
+        rightLeg.CanCollide = true
     end
 end
 
-local function applySpin(enable)
-    local hrp = getHRP()
-    local hum = getHum()
-    if not hrp or not hum then return end
+-- Функция для включения/выключения полёта (парения)
+local function setFly(enable)
+    local character = LocalPlayer.Character
+    if not character then return end
+    local humanoid = character:FindFirstChildOfClass("Humanoid")
+    local hrp = character:FindFirstChild("HumanoidRootPart")
+    if not humanoid or not hrp then return end
 
     if enable then
-        -- Отключаем AutoRotate, чтобы Humanoid не мешал вращению
-        hum.AutoRotate = false
-        -- НЕ трогаем PlatformStand, чтобы сохранить возможность ходьбы
+        -- Отключаем гравитацию и включаем "парение"
+        humanoid.PlatformStand = true -- Позволяет парить и управлять движением
+        humanoid.AutoRotate = false
 
-        -- Отключаем коллизии у всех частей, КРОМЕ HRP.
-        -- Это предотвращает разрыв скелета физикой, но HRP всё ещё сталкивается.
-        for _, p in ipairs(LocalPlayer.Character:GetDescendants()) do
-            if p:IsA("BasePart") and p.Name ~= "HumanoidRootPart" then
-                p.CanCollide = false
-            end
+        -- Создаём BodyGyro для стабилизации ориентации (чтобы не кувыркался)
+        if not bodyGyro then
+            bodyGyro = Instance.new("BodyGyro")
+            bodyGyro.Name = "FlyGyro"
+            bodyGyro.P = 10000
+            bodyGyro.D = 500
+            bodyGyro.MaxTorque = Vector3.new(math.huge, math.huge, math.huge)
+            bodyGyro.CFrame = hrp.CFrame
+            bodyGyro.Parent = hrp
         end
 
-        -- Используем AssemblyAngularVelocity вместо устаревшего BodyAngularVelocity
-        -- Это более современный и стабильный способ.
-        if not hrp:FindFirstChild("SafeSpinAngular") then
-            local ang = Instance.new("BodyAngularVelocity")
-            ang.Name = "SafeSpinAngular"
-            ang.AngularVelocity = Vector3.new(0, DEFAULT_SPEED, 0)
-            ang.MaxTorque = Vector3.new(math.huge, math.huge, math.huge)
-            ang.P = 50000 -- Снижено с 100000 для большей стабильности
-            ang.Parent = hrp
-            currentAngular = ang
+        -- Создаём BodyVelocity для управления движением
+        if not flyVelocity then
+            flyVelocity = Instance.new("BodyVelocity")
+            flyVelocity.Name = "FlyVelocity"
+            flyVelocity.Velocity = Vector3.new(0, 0, 0)
+            flyVelocity.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
+            flyVelocity.P = 1250
+            flyVelocity.Parent = hrp
+        end
+
+        -- Скрываем ноги, если включено
+        if HIDE_LEGS then
+            hideLegs(true)
+            -- Следим за респавном, чтобы снова спрятать ноги
+            if legHiddenConnection then legHiddenConnection:Disconnect() end
+            legHiddenConnection = LocalPlayer.CharacterAdded:Connect(function()
+                task.wait(1)
+                if FLY_ENABLED and HIDE_LEGS then hideLegs(true) end
+            end)
         end
     else
-        -- Выключаем спин
-        if hrp then
-            local ang = hrp:FindFirstChild("SafeSpinAngular")
-            if ang then ang:Destroy() end
+        -- Отключаем полёт
+        if humanoid then
+            humanoid.PlatformStand = false
+            humanoid.AutoRotate = true
         end
-        currentAngular = nil
-
-        -- Возвращаем коллизии
-        for _, p in ipairs(LocalPlayer.Character:GetDescendants()) do
-            if p:IsA("BasePart") then p.CanCollide = true end
-        end
-
-        -- Возвращаем AutoRotate
-        if hum then hum.AutoRotate = true end
+        if bodyGyro then bodyGyro:Destroy(); bodyGyro = nil end
+        if flyVelocity then flyVelocity:Destroy(); flyVelocity = nil end
+        if legHiddenConnection then legHiddenConnection:Disconnect(); legHiddenConnection = nil end
+        -- Возвращаем ноги на место
+        hideLegs(false)
     end
 end
 
 -- Обработчик кнопки
-flingBtn.MouseButton1Click:Connect(function()
-    FLING_ENABLED = not FLING_ENABLED
-    if FLING_ENABLED then
-        flingBtn.Text = "SPIN: ON"
-        flingBtn.BackgroundColor3 = Color3.fromRGB(200, 80, 80)
-        setupDeathProtection() -- Включаем защиту при активации
+flyBtn.MouseButton1Click:Connect(function()
+    FLY_ENABLED = not FLY_ENABLED
+    if FLY_ENABLED then
+        flyBtn.Text = "FLY: ON"
+        flyBtn.BackgroundColor3 = Color3.fromRGB(80, 180, 220)
     else
-        flingBtn.Text = "SPIN: OFF"
-        flingBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 70)
+        flyBtn.Text = "FLY: OFF"
+        flyBtn.BackgroundColor3 = Color3.fromRGB(50, 80, 110)
     end
-    applySpin(FLING_ENABLED)
+    setFly(FLY_ENABLED)
 end)
 
--- Авто-применение после респавна
+-- Управление полётом (WASD + камера)
+RunService.RenderStepped:Connect(function()
+    if not FLY_ENABLED or not flyVelocity then return end
+    local character = LocalPlayer.Character
+    if not character then return end
+    local humanoid = character:FindFirstChildOfClass("Humanoid")
+    local hrp = character:FindFirstChild("HumanoidRootPart")
+    if not humanoid or not hrp then return end
+
+    -- Получаем направление от камеры
+    local camera = workspace.CurrentCamera
+    local moveDirection = humanoid.MoveDirection
+    local cameraDirection = camera.CFrame.LookVector
+
+    -- Комбинируем движение вперёд/назад и влево/вправо с направлением камеры
+    local flyDirection = (cameraDirection * moveDirection.Z + camera.CFrame.RightVector * moveDirection.X).Unit
+    if moveDirection.Magnitude < 0.1 then
+        flyDirection = Vector3.new(0, 0, 0)
+    end
+
+    -- Добавляем вертикальное управление (Space = вверх, Shift = вниз)
+    local vertical = 0
+    if UIS:IsKeyDown(Enum.KeyCode.Space) then vertical = 1 end
+    if UIS:IsKeyDown(Enum.KeyCode.LeftShift) then vertical = -1 end
+
+    local finalVelocity = flyDirection * FLY_SPEED + Vector3.new(0, vertical * FLY_SPEED, 0)
+    flyVelocity.Velocity = finalVelocity
+
+    -- Стабилизируем гироскоп по направлению камеры
+    if bodyGyro then
+        bodyGyro.CFrame = CFrame.new(hrp.Position, hrp.Position + cameraDirection)
+    end
+end)
+
+-- Автоматическое выключение при смерти (чтобы не зависнуть в полёте)
 LocalPlayer.CharacterAdded:Connect(function()
-    task.wait(1)
-    if FLING_ENABLED then
-        applySpin(true)
+    if FLY_ENABLED then
+        FLY_ENABLED = false
+        flyBtn.Text = "FLY: OFF"
+        flyBtn.BackgroundColor3 = Color3.fromRGB(50, 80, 110)
+        -- Очистка
+        if flyVelocity then flyVelocity:Destroy(); flyVelocity = nil end
+        if bodyGyro then bodyGyro:Destroy(); bodyGyro = nil end
     end
 end)
