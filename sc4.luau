@@ -1,23 +1,24 @@
--- // FLING SPIN v2 — целое тело + перетаскиваемое меню + удаление старого //
+-- // SAFE SPIN v3 — защита от смерти + перетаскиваемое меню + удаление старого //
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
 local UIS = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
 
 -- ================== УДАЛЯЕМ СТАРОЕ МЕНЮ ==================
-local old = game.CoreGui:FindFirstChild("FlingSpinGui")
+local old = game.CoreGui:FindFirstChild("SafeSpinGui")
 if old then old:Destroy() end
-local old2 = LocalPlayer:WaitForChild("PlayerGui"):FindFirstChild("FlingSpinGui")
+local old2 = LocalPlayer:WaitForChild("PlayerGui"):FindFirstChild("SafeSpinGui")
 if old2 then old2:Destroy() end
 -- =========================================================
 
-local DEFAULT_SPEED = 400   -- рад/с. Подбирай: 200–1500. Больше = опаснее.
+local DEFAULT_SPEED = 180   -- СНИЖЕНО! Начни с 180, повышай осторожно (макс. 600)
 local FLING_ENABLED = false
 local currentAngular = nil
+local deathConnection = nil
 
 -- ================== UI ==================
 local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "FlingSpinGui"
+screenGui.Name = "SafeSpinGui"
 screenGui.ResetOnSpawn = false
 screenGui.Parent = game.CoreGui
 
@@ -35,8 +36,8 @@ Instance.new("UICorner", toggleBtn).CornerRadius = UDim.new(0,10)
 
 -- Основное меню
 local mainFrame = Instance.new("Frame")
-mainFrame.Size = UDim2.new(0, 280, 0, 240)
-mainFrame.Position = UDim2.new(0.5, -140, 0.5, -120)
+mainFrame.Size = UDim2.new(0, 280, 0, 260)
+mainFrame.Position = UDim2.new(0.5, -140, 0.5, -130)
 mainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
 mainFrame.BorderSizePixel = 0
 mainFrame.Visible = false
@@ -48,8 +49,8 @@ Instance.new("UICorner", mainFrame).CornerRadius = UDim.new(0, 12)
 local titleBar = Instance.new("TextButton")
 titleBar.Size = UDim2.new(1, 0, 0, 40)
 titleBar.BackgroundTransparency = 1
-titleBar.Text = "FLING SPIN MENU"
-titleBar.TextColor3 = Color3.fromRGB(255, 80, 80)
+titleBar.Text = "SAFE SPIN MENU"
+titleBar.TextColor3 = Color3.fromRGB(80, 255, 120)
 titleBar.TextSize = 18
 titleBar.Font = Enum.Font.GothamBold
 titleBar.Parent = mainFrame
@@ -86,7 +87,7 @@ local flingBtn = Instance.new("TextButton")
 flingBtn.Size = UDim2.new(0.85, 0, 0, 42)
 flingBtn.Position = UDim2.new(0.075, 0, 0.22, 0)
 flingBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 70)
-flingBtn.Text = "FLING: OFF"
+flingBtn.Text = "SPIN: OFF"
 flingBtn.TextColor3 = Color3.fromRGB(255,255,255)
 flingBtn.TextSize = 16
 flingBtn.Font = Enum.Font.GothamBold
@@ -113,8 +114,8 @@ sliderBg.Parent = mainFrame
 Instance.new("UICorner", sliderBg).CornerRadius = UDim.new(1, 0)
 
 local sliderFill = Instance.new("Frame")
-sliderFill.Size = UDim2.new(0.25, 0, 1, 0) -- начальное положение = 400 из 1500
-sliderFill.BackgroundColor3 = Color3.fromRGB(200, 80, 80)
+sliderFill.Size = UDim2.new(0.1, 0, 1, 0) -- начальное положение (180 из 600 ~ 0.1)
+sliderFill.BackgroundColor3 = Color3.fromRGB(80, 200, 120)
 sliderFill.BorderSizePixel = 0
 sliderFill.Parent = sliderBg
 Instance.new("UICorner", sliderFill).CornerRadius = UDim.new(1, 0)
@@ -122,7 +123,7 @@ Instance.new("UICorner", sliderFill).CornerRadius = UDim.new(1, 0)
 local function updateSpeedFromX(x)
     local rel = math.clamp((x - sliderBg.AbsolutePosition.X) / sliderBg.AbsoluteSize.X, 0, 1)
     sliderFill.Size = UDim2.new(rel, 0, 1, 0)
-    local speed = math.floor(100 + rel * 1400) -- 100..1500
+    local speed = math.floor(60 + rel * 540) -- 60..600
     speedLabel.Text = "Скорость: " .. speed
     if currentAngular then
         currentAngular.AngularVelocity = Vector3.new(0, speed, 0)
@@ -149,7 +150,7 @@ end)
 -- Кнопка закрытия
 local closeBtn = Instance.new("TextButton")
 closeBtn.Size = UDim2.new(0.85, 0, 0, 32)
-closeBtn.Position = UDim2.new(0.075, 0, 0.78, 0)
+closeBtn.Position = UDim2.new(0.075, 0, 0.85, 0)
 closeBtn.BackgroundColor3 = Color3.fromRGB(80, 40, 40)
 closeBtn.Text = "CLOSE"
 closeBtn.TextColor3 = Color3.fromRGB(255,255,255)
@@ -161,67 +162,98 @@ Instance.new("UICorner", closeBtn).CornerRadius = UDim.new(0, 6)
 toggleBtn.MouseButton1Click:Connect(function() mainFrame.Visible = not mainFrame.Visible end)
 closeBtn.MouseButton1Click:Connect(function() mainFrame.Visible = false end)
 
--- ================== ЛОГИКА СПИНА ==================
--- ВАЖНО: ничего не удаляем. Только отключаем коллизию у всех частей, кроме HRP.
--- Крутится вся сборка (все Motor6D-части вращаются вместе с HRP).
--- AutoRotate = false, чтобы Humanoid не боролся с вращением — ходьба работает
--- через MoveDirection от камеры.
-
-local function applyFling(enable)
+-- ================== ЛОГИКА БЕЗОПАСНОГО ВРАЩЕНИЯ ==================
+local function getHRP()
     local char = LocalPlayer.Character
-    if not char then return end
-    local hrp = char:FindFirstChild("HumanoidRootPart")
-    local hum = char:FindFirstChildOfClass("Humanoid")
+    return char and char:FindFirstChild("HumanoidRootPart")
+end
+
+local function getHum()
+    local char = LocalPlayer.Character
+    return char and char:FindFirstChildOfClass("Humanoid")
+end
+
+-- Защита: если здоровье падает, отключаем спин
+local function setupDeathProtection()
+    local hum = getHum()
+    if hum and not deathConnection then
+        deathConnection = hum.HealthChanged:Connect(function(health)
+            if health < hum.MaxHealth * 0.5 and FLING_ENABLED then
+                -- Если здоровье упало ниже 50%, принудительно выключаем спин
+                FLING_ENABLED = false
+                flingBtn.Text = "SPIN: OFF (ЗАЩИТА)"
+                flingBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 70)
+                applySpin(false)
+            end
+        end)
+    end
+end
+
+local function applySpin(enable)
+    local hrp = getHRP()
+    local hum = getHum()
+    if not hrp or not hum then return end
 
     if enable then
-        if hum then
-            hum.AutoRotate = false
-            -- чтобы физика не «убивала» при жёстком спине
-            hum.PlatformStand = false
-        end
-        -- Отключаем коллизии у всех частей кроме HRP → тело не разрывает,
-        -- но столкновение всё равно передаёт огромный момент.
-        for _, p in ipairs(char:GetDescendants()) do
+        -- Отключаем AutoRotate, чтобы Humanoid не мешал вращению
+        hum.AutoRotate = false
+        -- НЕ трогаем PlatformStand, чтобы сохранить возможность ходьбы
+
+        -- Отключаем коллизии у всех частей, КРОМЕ HRP.
+        -- Это предотвращает разрыв скелета физикой, но HRP всё ещё сталкивается.
+        for _, p in ipairs(LocalPlayer.Character:GetDescendants()) do
             if p:IsA("BasePart") and p.Name ~= "HumanoidRootPart" then
                 p.CanCollide = false
             end
         end
-        if hrp and not hrp:FindFirstChild("FlingAngular") then
+
+        -- Используем AssemblyAngularVelocity вместо устаревшего BodyAngularVelocity
+        -- Это более современный и стабильный способ.
+        if not hrp:FindFirstChild("SafeSpinAngular") then
             local ang = Instance.new("BodyAngularVelocity")
-            ang.Name = "FlingAngular"
+            ang.Name = "SafeSpinAngular"
             ang.AngularVelocity = Vector3.new(0, DEFAULT_SPEED, 0)
             ang.MaxTorque = Vector3.new(math.huge, math.huge, math.huge)
-            ang.P = 100000
+            ang.P = 50000 -- Снижено с 100000 для большей стабильности
             ang.Parent = hrp
             currentAngular = ang
         end
     else
+        -- Выключаем спин
         if hrp then
-            local ang = hrp:FindFirstChild("FlingAngular")
+            local ang = hrp:FindFirstChild("SafeSpinAngular")
             if ang then ang:Destroy() end
         end
         currentAngular = nil
-        for _, p in ipairs(char:GetDescendants()) do
+
+        -- Возвращаем коллизии
+        for _, p in ipairs(LocalPlayer.Character:GetDescendants()) do
             if p:IsA("BasePart") then p.CanCollide = true end
         end
+
+        -- Возвращаем AutoRotate
         if hum then hum.AutoRotate = true end
     end
 end
 
+-- Обработчик кнопки
 flingBtn.MouseButton1Click:Connect(function()
     FLING_ENABLED = not FLING_ENABLED
     if FLING_ENABLED then
-        flingBtn.Text = "FLING: ON"
-        flingBtn.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+        flingBtn.Text = "SPIN: ON"
+        flingBtn.BackgroundColor3 = Color3.fromRGB(200, 80, 80)
+        setupDeathProtection() -- Включаем защиту при активации
     else
-        flingBtn.Text = "FLING: OFF"
+        flingBtn.Text = "SPIN: OFF"
         flingBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 70)
     end
-    applyFling(FLING_ENABLED)
+    applySpin(FLING_ENABLED)
 end)
 
 -- Авто-применение после респавна
 LocalPlayer.CharacterAdded:Connect(function()
-    task.wait(0.5)
-    if FLING_ENABLED then applyFling(true) end
+    task.wait(1)
+    if FLING_ENABLED then
+        applySpin(true)
+    end
 end)
