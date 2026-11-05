@@ -12,8 +12,8 @@ local char = player.Character or player.CharacterAdded:Wait()
 
 local CROWN_ID = "5731050224"
 local CLONE_NAME = "OrbitCrown"
-local MAX_COUNT = 22
-local DIST_THRESHOLD = 15
+local MAX_COUNT = 90
+local DIST_THRESHOLD = 90
 
 -- ═══════════════ НАСТРОЙКИ ═══════════════
 local settings = {
