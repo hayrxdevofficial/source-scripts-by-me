@@ -1,4 +1,4 @@
 https://raw.githubusercontent.com/hayrxdevofficial/source-scripts-by-me/refs/heads/main/sc2.luau flappy bird gui
 https://raw.githubusercontent.com/hayrxdevofficial/source-scripts-by-me/refs/heads/main/sc1.luau click tool teleport
 https://raw.githubusercontent.com/hayrxdevofficial/source-scripts-by-me/refs/heads/main/sc3.luau geometry dash tool
-https://raw.githubusercontent.com/hayrxdevofficial/source-scripts-by-me/refs/heads/main/sc4.luau no legs
+https://raw.githubusercontent.com/hayrxdevofficial/source-scripts-by-me/refs/heads/main/sc4.luau coming soon
