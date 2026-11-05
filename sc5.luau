@@ -1,39 +1,39 @@
 -- ═══════════════════════════════════════════════════════════════
--- WINDOWS SCREEN (v27 - Face Player + Circle + Separate Spacing)
+-- WINDOWS SCREEN (v29 - Fixed Enum + Hard Constraints)
 -- ═══════════════════════════════════════════════════════════════
 
-local Players           = game:GetService("Players")
+local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local RunService        = game:GetService("RunService")
-local CoreGui           = game:GetService("CoreGui")
+local RunService = game:GetService("RunService")
+local CoreGui = game:GetService("CoreGui")
 
 local player = Players.LocalPlayer
-local char   = player.Character or player.CharacterAdded:Wait()
+local char = player.Character or player.CharacterAdded:Wait()
 
-local WINDOW_ID  = "110547096233249"
+local WINDOW_ID = "110547096233249"
 local CLONE_NAME = "ScreenWindow"
-local GRID_W     = 5
-local GRID_H     = 6
-local TOTAL      = GRID_W * GRID_H -- 30
+local GRID_W = 5
+local GRID_H = 6
+local TOTAL = GRID_W * GRID_H -- 30
 
--- ═══════════════ НАСТРОЙКИ ═══════════════
+-- ═══════════════ НАСТРОЙКИ (безопасные дефолты) ═══════════════
 local settings = {
-    shape       = "screen",  -- "screen" | "circle"
-    cellSize    = 5,         -- горизонтальный шаг (screen) / ширина пикселя (circle)
-    rowSpacing  = 5,         -- вертикальный шаг (только screen)
-    height      = 6,         -- высота над root
-    distance    = 20,        -- дистанция вперёд (screen)
-    radius      = 14,        -- радиус круга (circle)
-    followPlayer = false,    -- false = экран зафиксирован в мире
-    facingOffset = 0,        -- 0 или math.pi — поворот «лицом»
+    shape = "screen", -- screen | circle
+    cellSize = 4, -- горизонтальный шаг
+    rowSpacing = 3, -- вертикальный шаг
+    height = 8, -- высота центра
+    distance = 25, -- дистанция вперёд
+    radius = 14, -- радиус круга
+    followPlayer = false,
+    facingOffset = 0,
 }
 
 -- ═══════════════ СОСТОЯНИЕ ═══════════════
-local pixels         = {}
-local screenCFrame   = nil
-local scriptActive   = true
-local spawning       = false
-local nextSlot       = 1
+local pixels = {}
+local screenCFrame = nil
+local scriptActive = true
+local spawning = false
+local nextSlot = 1
 local heartbeatConn
 
 -- ═══════════════ ОТПРАВКА ═══════════════
@@ -93,7 +93,7 @@ titleBar.Parent = mainFrame
 local titleLabel = Instance.new("TextLabel")
 titleLabel.Size = UDim2.new(1, -80, 1, 0)
 titleLabel.BackgroundTransparency = 1
-titleLabel.Text = "📺 Windows Screen v27"
+titleLabel.Text = "📺 Windows Screen v29"
 titleLabel.TextColor3 = Color3.fromRGB(100, 200, 255)
 titleLabel.Font = Enum.Font.SourceSansBold
 titleLabel.TextSize = 15
@@ -145,7 +145,7 @@ local function createScrollingTab()
     return sf
 end
 
-local tabMain    = createScrollingTab()
+local tabMain = createScrollingTab()
 local tabSettings = createScrollingTab()
 tabMain.Visible = true
 
@@ -172,8 +172,8 @@ local function createTab(text, xPos, width, onClick)
     end)
 end
 
-createTab("Управление", 0,   170, function() tabMain.Visible=true; tabSettings.Visible=false end)
-createTab("Настройки",   175, 170, function() tabMain.Visible=false; tabSettings.Visible=true end)
+createTab("Управление", 0, 170, function() tabMain.Visible=true; tabSettings.Visible=false end)
+createTab("Настройки", 175, 170, function() tabMain.Visible=false; tabSettings.Visible=true end)
 
 local statusLabel = Instance.new("TextLabel")
 statusLabel.Size = UDim2.new(1, -20, 0, 40)
@@ -193,9 +193,8 @@ local function setStatus(t)
     print("[Screen] " .. t)
 end
 
--- ═══════════════ ПОЗИЦИЯ + ВРАЩЕНИЕ ПИКСЕЛЯ ═══════════════
--- Возвращает мировой CFrame: где окно и как оно повёрнуто (лицом к игроку)
-local function computePixelCFrame(d, root)
+-- ═══════════════ ПОЗИЦИЯ ПИКСЕЛЯ ═══════════════
+local function computePixelWorldCF(d, root)
     local worldPos
     if settings.shape == "circle" then
         local angle = (d.index - 1) / TOTAL * math.pi * 2
@@ -205,7 +204,6 @@ local function computePixelCFrame(d, root)
             math.sin(angle) * settings.radius
         )
     else
-        -- screen: плоская сетка перед игроком
         local screenCF = screenCFrame or (root.CFrame * CFrame.new(0, settings.height, -settings.distance))
         local cx = (GRID_W - 1) / 2
         local cy = (GRID_H - 1) / 2
@@ -214,9 +212,13 @@ local function computePixelCFrame(d, root)
         worldPos = (screenCF * CFrame.new(offX, offY, 0)).Position
     end
 
-    -- Смотрим на игрока
     local targetPos = root.Position + Vector3.new(0, settings.height * 0.5, 0)
-    local lookCF = CFrame.lookAt(worldPos, targetPos)
+    local lookCF
+    if (worldPos - targetPos).Magnitude < 0.01 then
+        lookCF = CFrame.new(worldPos)
+    else
+        lookCF = CFrame.lookAt(worldPos, targetPos)
+    end
     if settings.facingOffset ~= 0 then
         lookCF = lookCF * CFrame.Angles(0, settings.facingOffset, 0)
     end
@@ -239,6 +241,7 @@ local function setupWindow(window, col, row, index)
     if not handle or not root then window:Destroy() return end
 
     destroyForeignJoints(handle)
+
     handle.Anchored = false
     handle.CanCollide = false
     handle.Massless = true
@@ -255,30 +258,30 @@ local function setupWindow(window, col, row, index)
     rootAttach.Name = "ScreenTarget"
     rootAttach.Parent = root
 
-    -- AlignPosition — позиция
+    -- AlignPosition (ИСПРАВЛЕННЫЙ ENUM)
     local alignPos = Instance.new("AlignPosition")
-    alignPos.Mode = Enum.PositionAlignmentMode.TwoAttachments
+    alignPos.Mode = Enum.PositionAlignmentMode.TwoAttachment -- исправлено
     alignPos.Attachment0 = handleAttach
     alignPos.Attachment1 = rootAttach
     alignPos.ApplyAtCenterOfMass = true
-    alignPos.MaxForce = 5772000
-    alignPos.MaxVelocity = math.huge / 9e110
+    alignPos.MaxForce = 999999999
+    alignPos.MaxVelocity = math.huge
     alignPos.ReactionForceEnabled = false
     alignPos.Responsiveness = 200
-    alignPos.RigidityEnabled = false
+    alignPos.RigidityEnabled = true
     alignPos.Parent = handle
 
-    -- AlignOrientation — поворот к игроку
+    -- AlignOrientation (ИСПРАВЛЕННЫЙ ENUM)
     local alignOri = Instance.new("AlignOrientation")
-    alignOri.Mode = Enum.OrientationAlignmentMode.TwoAttachments
+    alignOri.Mode = Enum.OrientationAlignmentMode.TwoAttachment -- исправлено
     alignOri.Attachment0 = handleAttach
     alignOri.Attachment1 = rootAttach
-    alignOri.MaxAngularVelocity = math.huge / 9e110
-    alignOri.MaxTorque = 5772000
+    alignOri.MaxAngularVelocity = math.huge
+    alignOri.MaxTorque = 999999999
     alignOri.PrimaryAxisOnly = false
     alignOri.ReactionTorqueEnabled = false
     alignOri.Responsiveness = 200
-    alignOri.RigidityEnabled = false
+    alignOri.RigidityEnabled = true
     alignOri.Parent = handle
 
     window.Name = CLONE_NAME
@@ -313,7 +316,7 @@ local function processWindow(window)
         local data = setupWindow(window, col, row, mySlot)
         if not data then return end
         table.insert(pixels, data)
-        setStatus(("окно %d/%d (col=%d row=%d)"):format(#pixels, TOTAL, col, row))
+        setStatus(("окно %d/%d (c%d r%d)"):format(#pixels, TOTAL, col, row))
     end)
 end
 
@@ -347,32 +350,30 @@ heartbeatConn = RunService.Heartbeat:Connect(function()
             if d.handleAttach then d.handleAttach:Destroy() end
             table.remove(pixels, i)
         else
-            -- Считаем желаемый мировой CFrame и переводим в локальный для root
-            local targetWorldCF = computePixelCFrame(d, root)
+            -- Защита от физических сбоев
+            if d.handle.Massless ~= true then d.handle.Massless = true end
+            if d.handle.CanCollide then d.handle.CanCollide = false end
+            if d.handle.Anchored then d.handle.Anchored = false end
+
+            local targetWorldCF = computePixelWorldCF(d, root)
             d.rootAttach.CFrame = root.CFrame:Inverse() * targetWorldCF
 
-            -- Rescue
+            -- Rescue при сильном отклонении
             local dist = (d.handle.Position - d.rootAttach.WorldPosition).Magnitude
-            if dist > 30 then
-                d.handle.Anchored = true
+            if dist > 10 then
                 d.handle.CFrame = d.rootAttach.WorldCFrame
                 d.handle.AssemblyLinearVelocity = Vector3.zero
                 d.handle.AssemblyAngularVelocity = Vector3.zero
-                task.delay(0.05, function()
-                    if d.handle and d.handle.Parent then
-                        d.handle.Anchored = false
-                    end
-                end)
             end
 
-            -- Anti-weld
+            -- Удаление сторонних Weld
             for _, obj in ipairs(d.handle:GetChildren()) do
                 if obj:IsA("Weld") or obj:IsA("Motor6D") then
                     destroyForeignJoints(d.handle); break
                 end
             end
 
-            -- Ownership
+            -- Проверка сетевого владения
             local owner = nil
             pcall(function() owner = d.handle:GetNetworkOwner() end)
             if owner ~= player then
@@ -474,18 +475,17 @@ end
 -- ═══════════════ ВКЛАДКА УПРАВЛЕНИЕ ═══════════════
 local spawnY = 0
 
-local function refreshSpawnButtonColors()
+local shapeScreenBtn, shapeCircleBtn
+local function refreshShapeColors()
     if shapeScreenBtn then
-        shapeScreenBtn.BackgroundColor3 = (settings.shape == "screen")
-            and Color3.fromRGB(100, 200, 255) or Color3.fromRGB(45, 45, 45)
-        shapeScreenBtn.TextColor3 = (settings.shape == "screen")
-            and Color3.fromRGB(0, 0, 0) or Color3.fromRGB(255, 255, 255)
+        local active = (settings.shape == "screen")
+        shapeScreenBtn.BackgroundColor3 = active and Color3.fromRGB(100, 200, 255) or Color3.fromRGB(45, 45, 45)
+        shapeScreenBtn.TextColor3 = active and Color3.fromRGB(0, 0, 0) or Color3.fromRGB(255, 255, 255)
     end
     if shapeCircleBtn then
-        shapeCircleBtn.BackgroundColor3 = (settings.shape == "circle")
-            and Color3.fromRGB(100, 200, 255) or Color3.fromRGB(45, 45, 45)
-        shapeCircleBtn.TextColor3 = (settings.shape == "circle")
-            and Color3.fromRGB(0, 0, 0) or Color3.fromRGB(255, 255, 255)
+        local active = (settings.shape == "circle")
+        shapeCircleBtn.BackgroundColor3 = active and Color3.fromRGB(100, 200, 255) or Color3.fromRGB(45, 45, 45)
+        shapeCircleBtn.TextColor3 = active and Color3.fromRGB(0, 0, 0) or Color3.fromRGB(255, 255, 255)
     end
 end
 
@@ -520,7 +520,6 @@ makeButton(tabMain, "🧹 Удалить все окна", spawnY, Color3.fromRG
     setStatus("удалено")
 end); spawnY = spawnY + 42
 
--- Формы
 local shapeLabel = Instance.new("TextLabel")
 shapeLabel.Size = UDim2.new(1, 0, 0, 20)
 shapeLabel.Position = UDim2.new(0, 0, 0, spawnY)
@@ -544,7 +543,7 @@ shapeScreenBtn.TextSize = 13
 shapeScreenBtn.Parent = tabMain
 shapeScreenBtn.MouseButton1Click:Connect(function()
     settings.shape = "screen"
-    refreshSpawnButtonColors()
+    refreshShapeColors()
     setStatus("форма: плоский экран")
 end)
 
@@ -552,37 +551,40 @@ shapeCircleBtn = Instance.new("TextButton")
 shapeCircleBtn.Size = UDim2.new(0.48, 0, 0, 36)
 shapeCircleBtn.Position = UDim2.new(0.52, 0, 0, spawnY)
 shapeCircleBtn.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
-shapeCircleBtn.Text = "⭕ Круг вокруг"
+shapeCircleBtn.Text = "⭕ Круг"
 shapeCircleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
 shapeCircleBtn.Font = Enum.Font.SourceSans
 shapeCircleBtn.TextSize = 13
 shapeCircleBtn.Parent = tabMain
 shapeCircleBtn.MouseButton1Click:Connect(function()
     settings.shape = "circle"
-    refreshSpawnButtonColors()
+    refreshShapeColors()
     setStatus("форма: круг")
 end)
 spawnY = spawnY + 42
 
-makeButton(tabMain, "🔄 Повернуть на 180° (если задом)", spawnY, Color3.fromRGB(70, 70, 100), function()
+makeButton(tabMain, "🔄 Повернуть на 180°", spawnY, Color3.fromRGB(70, 70, 100), function()
     settings.facingOffset = (settings.facingOffset + math.pi) % (math.pi * 2)
-    setStatus(settings.facingOffset == 0 and "лицом" or "развёрнуто на 180°")
+    setStatus(settings.facingOffset == 0 and "лицом" or "развёрнуто 180°")
 end); spawnY = spawnY + 38
 
-makeButton(tabMain, "📍 Перецентрировать экран", spawnY, Color3.fromRGB(70, 70, 100), function()
+makeButton(tabMain, "📍 Перецентрировать", spawnY, Color3.fromRGB(70, 70, 100), function()
     local root = char:FindFirstChild("HumanoidRootPart")
     if root then
         screenCFrame = root.CFrame * CFrame.new(0, settings.height, -settings.distance)
-        setStatus("экран переставлен перед игроком")
+        setStatus("экран переставлен")
     end
 end); spawnY = spawnY + 38
 
-makeButton(tabMain, "🔍 Дамп состояния", spawnY, Color3.fromRGB(50, 50, 80), function()
+makeButton(tabMain, "🔍 Дамп (проверка Massless)", spawnY, Color3.fromRGB(50, 50, 80), function()
     local lines = {}
     for i, d in ipairs(pixels) do
         local p = d.handle and d.handle.Position or Vector3.zero
         local dist = (d.handle and d.rootAttach) and (d.handle.Position - d.rootAttach.WorldPosition).Magnitude or 0
-        table.insert(lines, ("#%d c%d r%d y=%.0f d=%.0f"):format(i, d.col, d.row, p.Y, dist))
+        local mass = d.handle and tostring(d.handle.Massless) or "?"
+        local anch = d.handle and tostring(d.handle.Anchored) or "?"
+        table.insert(lines, ("#%d y=%.0f d=%.1f M=%s A=%s"):format(i, p.Y, dist, mass, anch))
+        if i >= 6 then break end
     end
     setStatus(("пикселей: %d | %s"):format(#pixels, table.concat(lines, " | ")))
 end); spawnY = spawnY + 38
@@ -619,7 +621,7 @@ createSlider(tabSettings, "Радиус круга", sY, 5, 40, 1,
     function(v) return ("%.0f"):format(v) end)
 sY = sY + 36
 
-createSlider(tabSettings, "Высота над игроком", sY, -5, 30, 1,
+createSlider(tabSettings, "Высота над игроком", sY, 0, 40, 1,
     function() return settings.height end,
     function(v)
         settings.height = v
@@ -631,22 +633,22 @@ createSlider(tabSettings, "Высота над игроком", sY, -5, 30, 1,
     function(v) return ("%.0f"):format(v) end)
 sY = sY + 40
 
-local followBtn = makeButton(tabSettings, "📌 Экран зафиксирован в мире", sY, Color3.fromRGB(50, 80, 100), function() end)
+local followBtn = makeButton(tabSettings, "📌 Экран в мире", sY, Color3.fromRGB(50, 80, 100), function() end)
 sY = sY + 38
 followBtn.MouseButton1Click:Connect(function()
     settings.followPlayer = not settings.followPlayer
     if settings.followPlayer then
-        followBtn.Text = "📌 Экран следует за игроком"
+        followBtn.Text = "📌 Экран за игроком"
         followBtn.BackgroundColor3 = Color3.fromRGB(100, 80, 50)
     else
-        followBtn.Text = "📌 Экран зафиксирован в мире"
+        followBtn.Text = "📌 Экран в мире"
         followBtn.BackgroundColor3 = Color3.fromRGB(50, 80, 100)
         local root = char and char:FindFirstChild("HumanoidRootPart")
         if root then screenCFrame = root.CFrame * CFrame.new(0, settings.height, -settings.distance) end
     end
 end)
 
--- ═══════════════ ОБРАБОТЧИКИ ОКНА ═══════════════
+-- ═══════════════ ОБРАБОТЧИКИ ═══════════════
 toggleBtn.MouseButton1Click:Connect(function()
     toggleBtn.Visible = false; mainFrame.Visible = true
 end)
@@ -670,4 +672,4 @@ player.CharacterAdded:Connect(function(newChar)
     setStatus("респавн — создай экран заново")
 end)
 
-setStatus("v27 загружен — жми «Создать 30 окон»")
+setStatus("v29 загружен — нажми «Создать 30 окон»")
