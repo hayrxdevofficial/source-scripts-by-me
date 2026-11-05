@@ -1,26 +1,28 @@
--- // REANIMATE FLY / HIDE LEGS //
--- Вставьте этот код в ваш executor.
--- ВНИМАНИЕ: Техника реанимации может не работать на очень новых играх с защитой.
+-- // NO-LEGS WALK — прячет ноги в торс, ходьба остаётся обычной //
+-- R6 + R15. Меню перетаскиваемое. Старое меню удаляется.
+-- Вставьте в executor.
 
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
-local RunService = game:GetService("RunService")
 local UIS = game:GetService("UserInputService")
 
--- ================== НАСТРОЙКИ ==================
-local FLY_SPEED = 60          -- Скорость полёта
-local HIDE_LEGS = true       -- Скрыть ноги (спрятать в торс)
-local FLY_ENABLED = false
-local LEG_OFFSET = Vector3.new(0, 0, 0) -- Смещение ног внутрь торса
--- ================================================
+-- ================== УДАЛЯЕМ СТАРОЕ МЕНЮ ==================
+local old = game.CoreGui:FindFirstChild("NoLegsWalkGui")
+if old then old:Destroy() end
+local old2 = LocalPlayer:WaitForChild("PlayerGui"):FindFirstChild("NoLegsWalkGui")
+if old2 then old2:Destroy() end
+-- =========================================================
 
--- Удаляем старые версии меню, чтобы не было дублей
-local oldGui = game.CoreGui:FindFirstChild("ReanimateFlyGui")
-if oldGui then oldGui:Destroy() end
+-- ================== НАСТРОЙКИ ==================
+local LEG_PULL = 1.2   -- насколько глубоко задвигать ноги (studs).
+                        -- 1.0 = стандарт. Если торчат — увеличь до 1.5–2.
+                        -- Если «проваливаются» в грудь — уменьши до 0.6.
+local HIDE_ENABLED = false
+-- ================================================
 
 -- ================== UI ==================
 local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "ReanimateFlyGui"
+screenGui.Name = "NoLegsWalkGui"
 screenGui.ResetOnSpawn = false
 screenGui.Parent = game.CoreGui
 
@@ -29,17 +31,17 @@ local toggleBtn = Instance.new("TextButton")
 toggleBtn.Size = UDim2.new(0, 50, 0, 50)
 toggleBtn.Position = UDim2.new(1, -60, 1, -60)
 toggleBtn.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
-toggleBtn.Text = "🜁"
-toggleBtn.TextColor3 = Color3.fromRGB(150, 220, 255)
-toggleBtn.TextSize = 28
+toggleBtn.Text = "🦵"
+toggleBtn.TextColor3 = Color3.fromRGB(200, 200, 255)
+toggleBtn.TextSize = 26
 toggleBtn.Font = Enum.Font.GothamBold
 toggleBtn.Parent = screenGui
 Instance.new("UICorner", toggleBtn).CornerRadius = UDim.new(0, 10)
 
 -- Основное меню
 local mainFrame = Instance.new("Frame")
-mainFrame.Size = UDim2.new(0, 260, 0, 220)
-mainFrame.Position = UDim2.new(0.5, -130, 0.5, -110)
+mainFrame.Size = UDim2.new(0, 240, 0, 170)
+mainFrame.Position = UDim2.new(0.5, -120, 0.5, -85)
 mainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 26)
 mainFrame.BorderSizePixel = 0
 mainFrame.Visible = false
@@ -51,8 +53,8 @@ Instance.new("UICorner", mainFrame).CornerRadius = UDim.new(0, 12)
 local titleBar = Instance.new("TextButton")
 titleBar.Size = UDim2.new(1, 0, 0, 40)
 titleBar.BackgroundTransparency = 1
-titleBar.Text = "NO-LEGS FLY"
-titleBar.TextColor3 = Color3.fromRGB(150, 220, 255)
+titleBar.Text = "NO-LEGS WALK"
+titleBar.TextColor3 = Color3.fromRGB(200, 200, 255)
 titleBar.TextSize = 18
 titleBar.Font = Enum.Font.GothamBold
 titleBar.Parent = mainFrame
@@ -84,16 +86,16 @@ UIS.InputChanged:Connect(function(input)
 end)
 
 -- Кнопка включения/выключения
-local flyBtn = Instance.new("TextButton")
-flyBtn.Size = UDim2.new(0.85, 0, 0, 42)
-flyBtn.Position = UDim2.new(0.075, 0, 0.25, 0)
-flyBtn.BackgroundColor3 = Color3.fromRGB(50, 80, 110)
-flyBtn.Text = "FLY: OFF"
-flyBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-flyBtn.TextSize = 16
-flyBtn.Font = Enum.Font.GothamBold
-flyBtn.Parent = mainFrame
-Instance.new("UICorner", flyBtn).CornerRadius = UDim.new(0, 8)
+local hideBtn = Instance.new("TextButton")
+hideBtn.Size = UDim2.new(0.85, 0, 0, 42)
+hideBtn.Position = UDim2.new(0.075, 0, 0.3, 0)
+hideBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 90)
+hideBtn.Text = "HIDE LEGS: OFF"
+hideBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+hideBtn.TextSize = 15
+hideBtn.Font = Enum.Font.GothamBold
+hideBtn.Parent = mainFrame
+Instance.new("UICorner", hideBtn).CornerRadius = UDim.new(0, 8)
 
 -- Кнопка закрытия
 local closeBtn = Instance.new("TextButton")
@@ -110,180 +112,126 @@ Instance.new("UICorner", closeBtn).CornerRadius = UDim.new(0, 6)
 toggleBtn.MouseButton1Click:Connect(function() mainFrame.Visible = not mainFrame.Visible end)
 closeBtn.MouseButton1Click:Connect(function() mainFrame.Visible = false end)
 
--- ================== ЛОГИКА РЕАНИМАЦИИ И ПОЛЁТА ==================
-local flyVelocity = nil
-local bodyGyro = nil
-local legHiddenConnection = nil
-
--- Функция для скрытия ног (перемещение внутрь торса)
+-- ================== ЛОГИКА ПРЯТАНИЯ НОГ ==================
 local function hideLegs(enable)
     local character = LocalPlayer.Character
     if not character then return end
-    local torso = character:FindFirstChild("Torso") or character:FindFirstChild("UpperTorso")
-    if not torso then return end
 
-    local leftLeg = character:FindFirstChild("Left Leg") or character:FindFirstChild("LeftUpperLeg")
-    local rightLeg = character:FindFirstChild("Right Leg") or character:FindFirstChild("RightUpperLeg")
-    if not leftLeg or not rightLeg then return end
+    local isR6 = character:FindFirstChild("Torso") ~= nil
 
-    -- Находим суставы (Motor6D) для ног
-    local leftHip = torso:FindFirstChild("Left Hip") or torso:FindFirstChild("LeftUpperLeg")
-    local rightHip = torso:FindFirstChild("Right Hip") or torso:FindFirstChild("RightUpperLeg")
+    if isR6 then
+        -- ============ R6 ============
+        local torso    = character:FindFirstChild("Torso")
+        local leftLeg  = character:FindFirstChild("Left Leg")
+        local rightLeg = character:FindFirstChild("Right Leg")
+        local leftHip  = torso and torso:FindFirstChild("Left Hip")
+        local rightHip = torso and torso:FindFirstChild("Right Hip")
 
-    if enable then
-        -- Сохраняем оригинальные C0 и C1, если ещё не сохранили
-        if not leftLeg:GetAttribute("OrigC0") then
+        if enable then
+            if leftLeg and leftHip then
+                if not leftHip:GetAttribute("OrigC0") then
+                    leftHip:SetAttribute("OrigC0", leftHip.C0)
+                    leftHip:SetAttribute("OrigC1", leftHip.C1)
+                end
+                leftHip.C0 = leftHip.C0 + Vector3.new(0, LEG_PULL, 0)
+                leftLeg.Transparency = 1
+                leftLeg.CanCollide = false
+            end
+            if rightLeg and rightHip then
+                if not rightHip:GetAttribute("OrigC0") then
+                    rightHip:SetAttribute("OrigC0", rightHip.C0)
+                    rightHip:SetAttribute("OrigC1", rightHip.C1)
+                end
+                rightHip.C0 = rightHip.C0 + Vector3.new(0, LEG_PULL, 0)
+                rightLeg.Transparency = 1
+                rightLeg.CanCollide = false
+            end
+        else
+            if leftLeg and leftHip and leftHip:GetAttribute("OrigC0") then
+                leftHip.C0 = leftHip:GetAttribute("OrigC0")
+                leftHip.C1 = leftHip:GetAttribute("OrigC1")
+                leftLeg.Transparency = 0
+                leftLeg.CanCollide = true
+            end
+            if rightLeg and rightHip and rightHip:GetAttribute("OrigC0") then
+                rightHip.C0 = rightHip:GetAttribute("OrigC0")
+                rightHip.C1 = rightHip:GetAttribute("OrigC1")
+                rightLeg.Transparency = 0
+                rightLeg.CanCollide = true
+            end
+        end
+    else
+        -- ============ R15 ============
+        local lowerTorso = character:FindFirstChild("LowerTorso")
+        local legParts = {
+            "LeftUpperLeg", "LeftLowerLeg", "LeftFoot",
+            "RightUpperLeg", "RightLowerLeg", "RightFoot"
+        }
+        local leftHip  = lowerTorso and lowerTorso:FindFirstChild("LeftHip")
+        local rightHip = lowerTorso and lowerTorso:FindFirstChild("RightHip")
+
+        if enable then
+            -- Прячем все сегменты ног
+            for _, name in ipairs(legParts) do
+                local p = character:FindFirstChild(name)
+                if p then
+                    p.Transparency = 1
+                    p.CanCollide = false
+                end
+            end
+            -- Задвигаем всю цепочку в торс через Hip.C0
             if leftHip then
-                leftLeg:SetAttribute("OrigC0", leftHip.C0)
-                leftLeg:SetAttribute("OrigC1", leftHip.C1)
+                if not leftHip:GetAttribute("OrigC0") then
+                    leftHip:SetAttribute("OrigC0", leftHip.C0)
+                    leftHip:SetAttribute("OrigC1", leftHip.C1)
+                end
+                leftHip.C0 = leftHip.C0 + Vector3.new(0, LEG_PULL, 0)
             end
             if rightHip then
-                rightLeg:SetAttribute("OrigC0", rightHip.C0)
-                rightLeg:SetAttribute("OrigC1", rightHip.C1)
+                if not rightHip:GetAttribute("OrigC0") then
+                    rightHip:SetAttribute("OrigC0", rightHip.C0)
+                    rightHip:SetAttribute("OrigC1", rightHip.C1)
+                end
+                rightHip.C0 = rightHip.C0 + Vector3.new(0, LEG_PULL, 0)
+            end
+        else
+            -- Восстанавливаем
+            for _, name in ipairs(legParts) do
+                local p = character:FindFirstChild(name)
+                if p then
+                    p.Transparency = 0
+                    p.CanCollide = true
+                end
+            end
+            if leftHip and leftHip:GetAttribute("OrigC0") then
+                leftHip.C0 = leftHip:GetAttribute("OrigC0")
+                leftHip.C1 = leftHip:GetAttribute("OrigC1")
+            end
+            if rightHip and rightHip:GetAttribute("OrigC0") then
+                rightHip.C0 = rightHip:GetAttribute("OrigC0")
+                rightHip.C1 = rightHip:GetAttribute("OrigC1")
             end
         end
-        -- Смещаем суставы так, чтобы ноги ушли внутрь торса
-        if leftHip then
-            leftHip.C0 = CFrame.new(LEG_OFFSET) * leftHip.C0
-        end
-        if rightHip then
-            rightHip.C0 = CFrame.new(LEG_OFFSET) * rightHip.C0
-        end
-        -- Делаем ноги невидимыми и отключаем коллизию
-        leftLeg.Transparency = 1
-        rightLeg.Transparency = 1
-        leftLeg.CanCollide = false
-        rightLeg.CanCollide = false
-    else
-        -- Восстанавливаем всё обратно
-        if leftHip and leftLeg:GetAttribute("OrigC0") then
-            leftHip.C0 = leftLeg:GetAttribute("OrigC0")
-            leftHip.C1 = leftLeg:GetAttribute("OrigC1")
-        end
-        if rightHip and rightLeg:GetAttribute("OrigC0") then
-            rightHip.C0 = rightLeg:GetAttribute("OrigC0")
-            rightHip.C1 = rightLeg:GetAttribute("OrigC1")
-        end
-        leftLeg.Transparency = 0
-        rightLeg.Transparency = 0
-        leftLeg.CanCollide = true
-        rightLeg.CanCollide = true
-    end
-end
-
--- Функция для включения/выключения полёта (парения)
-local function setFly(enable)
-    local character = LocalPlayer.Character
-    if not character then return end
-    local humanoid = character:FindFirstChildOfClass("Humanoid")
-    local hrp = character:FindFirstChild("HumanoidRootPart")
-    if not humanoid or not hrp then return end
-
-    if enable then
-        -- Отключаем гравитацию и включаем "парение"
-        humanoid.PlatformStand = true -- Позволяет парить и управлять движением
-        humanoid.AutoRotate = false
-
-        -- Создаём BodyGyro для стабилизации ориентации (чтобы не кувыркался)
-        if not bodyGyro then
-            bodyGyro = Instance.new("BodyGyro")
-            bodyGyro.Name = "FlyGyro"
-            bodyGyro.P = 10000
-            bodyGyro.D = 500
-            bodyGyro.MaxTorque = Vector3.new(math.huge, math.huge, math.huge)
-            bodyGyro.CFrame = hrp.CFrame
-            bodyGyro.Parent = hrp
-        end
-
-        -- Создаём BodyVelocity для управления движением
-        if not flyVelocity then
-            flyVelocity = Instance.new("BodyVelocity")
-            flyVelocity.Name = "FlyVelocity"
-            flyVelocity.Velocity = Vector3.new(0, 0, 0)
-            flyVelocity.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
-            flyVelocity.P = 1250
-            flyVelocity.Parent = hrp
-        end
-
-        -- Скрываем ноги, если включено
-        if HIDE_LEGS then
-            hideLegs(true)
-            -- Следим за респавном, чтобы снова спрятать ноги
-            if legHiddenConnection then legHiddenConnection:Disconnect() end
-            legHiddenConnection = LocalPlayer.CharacterAdded:Connect(function()
-                task.wait(1)
-                if FLY_ENABLED and HIDE_LEGS then hideLegs(true) end
-            end)
-        end
-    else
-        -- Отключаем полёт
-        if humanoid then
-            humanoid.PlatformStand = false
-            humanoid.AutoRotate = true
-        end
-        if bodyGyro then bodyGyro:Destroy(); bodyGyro = nil end
-        if flyVelocity then flyVelocity:Destroy(); flyVelocity = nil end
-        if legHiddenConnection then legHiddenConnection:Disconnect(); legHiddenConnection = nil end
-        -- Возвращаем ноги на место
-        hideLegs(false)
     end
 end
 
 -- Обработчик кнопки
-flyBtn.MouseButton1Click:Connect(function()
-    FLY_ENABLED = not FLY_ENABLED
-    if FLY_ENABLED then
-        flyBtn.Text = "FLY: ON"
-        flyBtn.BackgroundColor3 = Color3.fromRGB(80, 180, 220)
+hideBtn.MouseButton1Click:Connect(function()
+    HIDE_ENABLED = not HIDE_ENABLED
+    if HIDE_ENABLED then
+        hideBtn.Text = "HIDE LEGS: ON"
+        hideBtn.BackgroundColor3 = Color3.fromRGB(80, 150, 200)
     else
-        flyBtn.Text = "FLY: OFF"
-        flyBtn.BackgroundColor3 = Color3.fromRGB(50, 80, 110)
+        hideBtn.Text = "HIDE LEGS: OFF"
+        hideBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 90)
     end
-    setFly(FLY_ENABLED)
+    hideLegs(HIDE_ENABLED)
 end)
 
--- Управление полётом (WASD + камера)
-RunService.RenderStepped:Connect(function()
-    if not FLY_ENABLED or not flyVelocity then return end
-    local character = LocalPlayer.Character
-    if not character then return end
-    local humanoid = character:FindFirstChildOfClass("Humanoid")
-    local hrp = character:FindFirstChild("HumanoidRootPart")
-    if not humanoid or not hrp then return end
-
-    -- Получаем направление от камеры
-    local camera = workspace.CurrentCamera
-    local moveDirection = humanoid.MoveDirection
-    local cameraDirection = camera.CFrame.LookVector
-
-    -- Комбинируем движение вперёд/назад и влево/вправо с направлением камеры
-    local flyDirection = (cameraDirection * moveDirection.Z + camera.CFrame.RightVector * moveDirection.X).Unit
-    if moveDirection.Magnitude < 0.1 then
-        flyDirection = Vector3.new(0, 0, 0)
-    end
-
-    -- Добавляем вертикальное управление (Space = вверх, Shift = вниз)
-    local vertical = 0
-    if UIS:IsKeyDown(Enum.KeyCode.Space) then vertical = 1 end
-    if UIS:IsKeyDown(Enum.KeyCode.LeftShift) then vertical = -1 end
-
-    local finalVelocity = flyDirection * FLY_SPEED + Vector3.new(0, vertical * FLY_SPEED, 0)
-    flyVelocity.Velocity = finalVelocity
-
-    -- Стабилизируем гироскоп по направлению камеры
-    if bodyGyro then
-        bodyGyro.CFrame = CFrame.new(hrp.Position, hrp.Position + cameraDirection)
-    end
-end)
-
--- Автоматическое выключение при смерти (чтобы не зависнуть в полёте)
+-- Автоприменение после респавна (если было включено)
 LocalPlayer.CharacterAdded:Connect(function()
-    if FLY_ENABLED then
-        FLY_ENABLED = false
-        flyBtn.Text = "FLY: OFF"
-        flyBtn.BackgroundColor3 = Color3.fromRGB(50, 80, 110)
-        -- Очистка
-        if flyVelocity then flyVelocity:Destroy(); flyVelocity = nil end
-        if bodyGyro then bodyGyro:Destroy(); bodyGyro = nil end
+    task.wait(0.5)
+    if HIDE_ENABLED then
+        hideLegs(true)
     end
 end)
