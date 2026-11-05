@@ -2,5 +2,5 @@ https://raw.githubusercontent.com/hayrxdevofficial/source-scripts-by-me/refs/hea
 https://raw.githubusercontent.com/hayrxdevofficial/source-scripts-by-me/refs/heads/main/sc1.luau click tool teleport
 https://raw.githubusercontent.com/hayrxdevofficial/source-scripts-by-me/refs/heads/main/sc3.luau geometry dash tool
 https://raw.githubusercontent.com/hayrxdevofficial/source-scripts-by-me/refs/heads/main/sc4.luau fe crown
-
+https://raw.githubusercontent.com/hayrxdevofficial/source-scripts-by-me/refs/heads/main/sc5.luau windows xp (screen)
 https://raw.githubusercontent.com/hayrxdevofficial/source-scripts-by-me/refs/heads/main/sc6.luau r6 big arms
